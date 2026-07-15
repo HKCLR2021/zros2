@@ -1,0 +1,8 @@
+uint32 depth
+builtin_interfaces/msg/Duration deadline
+builtin_interfaces/msg/Duration lifespan
+uint8 history
+uint8 reliability
+uint8 durability
+uint8 liveliness
+builtin_interfaces/msg/Duration liveliness_lease_duration

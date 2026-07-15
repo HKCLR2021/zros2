@@ -1,0 +1,5 @@
+uint32 id
+uint32 parent_id
+string title
+string command
+uint8 command_type

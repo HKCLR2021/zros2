@@ -1,0 +1,3 @@
+string topic_name
+uint64 messages_lost_in_transport
+uint64 messages_lost_in_recorder

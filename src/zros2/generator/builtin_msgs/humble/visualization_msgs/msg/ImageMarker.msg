@@ -1,0 +1,13 @@
+std_msgs/msg/Header header
+string ns
+int32 id
+int32 type
+int32 action
+geometry_msgs/msg/Point position
+float32 scale
+std_msgs/msg/ColorRGBA outline_color
+uint8 filled
+std_msgs/msg/ColorRGBA fill_color
+builtin_interfaces/msg/Duration lifetime
+geometry_msgs/msg/Point[] points
+std_msgs/msg/ColorRGBA[] outline_colors

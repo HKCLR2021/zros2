@@ -1,0 +1,2 @@
+string node_name
+rosbag2_interfaces/msg/MessagesLostEventTopicStat[] messages_lost_statistics

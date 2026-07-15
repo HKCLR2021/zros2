@@ -1,0 +1,2 @@
+type_description_interfaces/msg/IndividualTypeDescription type_description
+type_description_interfaces/msg/IndividualTypeDescription[] referenced_type_descriptions

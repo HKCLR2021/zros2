@@ -1,0 +1,9 @@
+std_msgs/msg/Header header
+string client_id
+string marker_name
+string control_name
+uint8 event_type
+geometry_msgs/msg/Pose pose
+uint32 menu_entry_id
+geometry_msgs/msg/Point mouse_point
+bool mouse_point_valid

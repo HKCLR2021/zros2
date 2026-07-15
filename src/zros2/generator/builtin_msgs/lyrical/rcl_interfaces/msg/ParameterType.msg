@@ -1,0 +1,1 @@
+uint8 structure_needs_at_least_one_member

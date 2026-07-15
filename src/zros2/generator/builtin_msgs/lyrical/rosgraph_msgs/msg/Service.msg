@@ -1,0 +1,5 @@
+string name
+rosgraph_msgs/msg/InterfaceType request_type
+rosgraph_msgs/msg/QoSProfile request_qos
+rosgraph_msgs/msg/InterfaceType response_type
+rosgraph_msgs/msg/QoSProfile response_qos

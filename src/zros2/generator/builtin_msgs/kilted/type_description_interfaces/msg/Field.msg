@@ -1,0 +1,3 @@
+string name
+type_description_interfaces/msg/FieldType type
+string default_value

@@ -1,0 +1,9 @@
+string name
+rcl_interfaces/msg/ParameterDescriptor[] parameters
+rcl_interfaces/msg/ParameterValue[] parameter_values
+rosgraph_msgs/msg/Topic[] publishers
+rosgraph_msgs/msg/Topic[] subscriptions
+rosgraph_msgs/msg/Service[] service_clients
+rosgraph_msgs/msg/Service[] service_servers
+rosgraph_msgs/msg/Action[] action_clients
+rosgraph_msgs/msg/Action[] action_servers
