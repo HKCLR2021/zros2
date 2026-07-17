@@ -1,3 +1,10 @@
+"""Liveliness tokens for Zenoh-based ROS 2-style node discovery.
+
+Provides ``Liveliness`` and ``LivelinessType`` primitives that let nodes
+announce their presence and detect peer availability via Zenoh's built-in
+liveliness mechanism.
+"""
+
 import enum
 import logging
 from dataclasses import dataclass

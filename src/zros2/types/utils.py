@@ -2,11 +2,34 @@
 
 from collections.abc import Sequence as AbcSequence
 from dataclasses import fields, is_dataclass
+from functools import lru_cache
 from typing import Annotated, Any, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 
 from ._base import RosMessage
 
 T = TypeVar("T", bound=RosMessage)
+
+
+@lru_cache(maxsize=None)
+def _get_cached_hints(cls: type) -> dict[str, Any]:
+    """Cached wrapper around ``typing.get_type_hints``.
+
+    ``get_type_hints`` can be non-trivial when annotations involve
+    ``Annotated`` wrappers (as pycdr2 types do).  Caching avoids
+    re-resolving them on every ``from_dict`` / ``from_attributes`` call.
+    """
+    return get_type_hints(cls)
+
+
+@lru_cache(maxsize=None)
+def _get_cached_fields(cls_or_obj: type) -> tuple:
+    """Cached wrapper around ``dataclasses.fields``.
+
+    ``fields()`` creates a new ``tuple`` on every call.  For deeply nested
+    messages called repeatedly (e.g. inside ``_to_dict_value``), caching
+    avoids the per-call tuple allocation.
+    """
+    return fields(cls_or_obj)
 
 
 def from_dict(cls: type[T], data: dict[str, Any]) -> T:
@@ -48,9 +71,10 @@ def from_attributes(cls: type[T], obj: Any) -> T:
         KeyError: If a required field is missing from ``obj``.
         TypeError: If a field value has an incompatible type.
     """
+    assert is_dataclass(cls), f"{cls} must be a dataclass"
     kwargs: dict[str, Any] = {}
-    hints = get_type_hints(cls)
-    for f in fields(cls):
+    hints = _get_cached_hints(cls)
+    for f in _get_cached_fields(cls):
         if not hasattr(obj, f.name):
             raise KeyError(
                 f"Missing required field '{f.name}' for {cls.__name__}")
@@ -66,7 +90,8 @@ def from_attributes(cls: type[T], obj: Any) -> T:
                 elif isinstance(value, inner):
                     kwargs[f.name] = value
                 elif not isinstance(value, (int, float, str, bool, bytes)):
-                    kwargs[f.name] = from_attributes(inner, value)
+                    kwargs[f.name] = from_attributes(
+                        cast(type[RosMessage], inner), value)
                 else:
                     raise TypeError(
                         f"Expected {_type_name(inner)} for field '{f.name}', "
@@ -165,7 +190,7 @@ def _to_dict_value(obj: Any, *, max_depth: int = 64, _depth: int = 0) -> Any:
     # Dataclass → dict
     if is_dataclass(obj):
         result: dict[str, Any] = {}
-        for field in fields(obj):
+        for field in _get_cached_fields(type(obj)):
             value = getattr(obj, field.name)
             result[field.name] = _to_dict_value(
                 value, max_depth=max_depth, _depth=_depth + 1
@@ -219,10 +244,10 @@ def _from_dict_impl(
     _seen.add(data_id)
 
     try:
-        hints = get_type_hints(cls)
+        hints = _get_cached_hints(cls)
         kwargs: dict[str, Any] = {}
 
-        for field in fields(cls):
+        for field in _get_cached_fields(cls):
             if field.name not in data:
                 raise KeyError(
                     f"Missing required field '{field.name}' for {cls.__name__}")

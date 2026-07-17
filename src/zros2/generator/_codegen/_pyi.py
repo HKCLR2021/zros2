@@ -192,7 +192,7 @@ def generate_stub_module(
     if init_params:
         # Use type-appropriate defaults (same logic as the runtime .py)
         # instead of ``None``, so type checkers see correct types.
-        kw_defaults: list[ast.expr] = []
+        kw_defaults: list[ast.expr | None] = []
         for field in defn.fields:
             resolved = resolve_type(
                 field.type_str,

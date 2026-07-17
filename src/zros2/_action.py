@@ -124,8 +124,8 @@ class Action(Generic[_SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _GoalT, _Resul
             if goal is None:
                 goal = self._action_types.Goal()
             payload = self._action_types.SendGoal_Request()
-            setattr(payload, 'goal', goal)
-            setattr(payload, 'goal_id', tuple(self._goal_id))
+            setattr(payload, "goal", goal)
+            setattr(payload, "goal_id", tuple(self._goal_id))
 
             # Build an ad-hoc service class for the internal send_goal call.
             _send_goal_srv = type("_SendGoalSrv", (), {
@@ -157,7 +157,7 @@ class Action(Generic[_SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _GoalT, _Resul
         """
         with self._lock:
             req = self._action_types.GetResult_Request()
-            setattr(req, 'goal_id', tuple(self._goal_id))
+            setattr(req, "goal_id", tuple(self._goal_id))
 
             _get_result_srv = type("_GetResultSrv", (), {
                 "__module__": __name__,
@@ -180,7 +180,7 @@ class Action(Generic[_SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _GoalT, _Resul
     # ── Internal helpers ─────────────────────────────────────────────
 
     @staticmethod
-    def _new_goal_id():
+    def _new_goal_id() -> list[int]:
         """Generate a new random goal ID.
 
         Uses cryptographically random bytes so the full 256^16 keyspace

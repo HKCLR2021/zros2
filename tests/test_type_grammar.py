@@ -121,6 +121,20 @@ class TestParseStringTypes:
         info = parse_type("string<=65535")
         assert info.string_max == 65535
 
+    def test_string_bounded_constant_ref(self):
+        """``string<=MAX_LEN`` — bound as a constant reference."""
+        info = parse_type("string<=MAX_LEN")
+        assert info.base_name == "string"
+        assert info.is_bounded_string
+        assert info.string_max == "MAX_LEN"
+
+    def test_wstring_bounded_constant_ref(self):
+        """``wstring<=LIMIT`` — bound as a constant reference."""
+        info = parse_type("wstring<=LIMIT")
+        assert info.base_name == "wstring"
+        assert info.is_bounded_string
+        assert info.string_max == "LIMIT"
+
 
 # ======================================================================
 # parse_type() — dynamic arrays (unbounded [])
@@ -180,6 +194,13 @@ class TestParseFixedArrays:
         info = parse_type("int32[1]")
         assert info.array_size == 1
 
+    def test_fixed_array_constant_ref(self):
+        """``int32[COUNT]`` — fixed array with constant reference."""
+        info = parse_type("int32[COUNT]")
+        assert info.base_name == "int32"
+        assert info.kind == "fixed"
+        assert info.array_size == "COUNT"
+
 
 # ======================================================================
 # parse_type() — bounded dynamic arrays [<=N]
@@ -200,6 +221,13 @@ class TestParseBoundedArrays:
         assert info.base_name == "string"
         assert info.kind == "bounded"
         assert info.array_max == 100
+
+    def test_bounded_array_constant_ref(self):
+        """``int32[<=MAX]`` — bounded array with constant reference."""
+        info = parse_type("int32[<=MAX]")
+        assert info.base_name == "int32"
+        assert info.kind == "bounded"
+        assert info.array_max == "MAX"
 
 
 # ======================================================================
@@ -230,6 +258,15 @@ class TestParseBoundedStringInBoundedArray:
         assert info.is_bounded_string
         assert info.string_max == 20
         assert info.kind == "unbounded"
+
+    def test_bounded_string_constant_in_bounded_array(self):
+        """``string<=MAX[<=LIMIT]`` — compound with constant refs."""
+        info = parse_type("string<=MAX[<=LIMIT]")
+        assert info.base_name == "string"
+        assert info.is_bounded_string
+        assert info.string_max == "MAX"
+        assert info.kind == "bounded"
+        assert info.array_max == "LIMIT"
 
 
 # ======================================================================
@@ -267,6 +304,13 @@ class TestParseSequences:
         assert info.kind == "bounded_sequence"
         assert info.array_max == 1000
 
+    def test_sequence_bounded_constant_ref(self):
+        """``sequence<uint8, N>`` — bound as a constant reference."""
+        info = parse_type("sequence<uint8,N>")
+        assert info.base_name == "uint8"
+        assert info.kind == "bounded_sequence"
+        assert info.array_max == "N"
+
 
 # ======================================================================
 # parse_type() — nested / qualified identifiers
@@ -297,6 +341,26 @@ class TestParseNestedTypes:
         assert info.base_name == "_PrivateType"
 
 
+class TestParseStringInPathIdentifiers:
+    """Types where ``string``/``wstring`` appear inside path identifiers."""
+
+    def test_string_in_two_part_type(self):
+        """``my_pkg/string/MyType`` — ``string`` is a namespace component."""
+        info = parse_type("my_pkg/string/MyType")
+        assert info.base_name == "my_pkg/string/MyType"
+
+    def test_wstring_in_three_part_type(self):
+        """``pkg/wstring/sub/Type`` — ``wstring`` in path."""
+        info = parse_type("pkg/wstring/sub/Type")
+        assert info.base_name == "pkg/wstring/sub/Type"
+
+    def test_string_in_path_with_array(self):
+        """``pkg/string/Type[]`` — path with array suffix."""
+        info = parse_type("pkg/string/Type[]")
+        assert info.base_name == "pkg/string/Type"
+        assert info.kind == "unbounded"
+
+
 # ======================================================================
 # parse_type() — edge cases and error handling
 # ======================================================================
@@ -325,9 +389,12 @@ class TestParseEdgeCases:
         with pytest.raises(LarkError):
             parse_type("@@invalid@@")
 
-    def test_invalid_array_syntax_raises(self):
-        with pytest.raises(LarkError):
-            parse_type("int32[abc]")
+    def test_fixed_array_constant_reference(self):
+        """``int32[abc]`` is valid — ``abc`` is a constant-reference size."""
+        info = parse_type("int32[abc]")
+        assert info.base_name == "int32"
+        assert info.kind == "fixed"
+        assert info.array_size == "abc"
 
     def test_partial_array_raises(self):
         with pytest.raises(LarkError):

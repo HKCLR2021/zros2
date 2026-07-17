@@ -1,3 +1,10 @@
+"""Exception hierarchy for zros2.
+
+All exceptions raised by the library inherit from ``ZRos2Exception``.
+Downstream code can catch this base type or any of its specific subtypes.
+"""
+
+
 class ZRos2Exception(Exception):
     """Base exception for all zros2-related errors."""
     pass

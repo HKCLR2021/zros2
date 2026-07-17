@@ -10,8 +10,6 @@ Tests the generator orchestrator in isolation:
 """
 
 import pathlib
-import sys
-import ast
 import pytest
 from unittest import mock
 

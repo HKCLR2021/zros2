@@ -9,9 +9,7 @@ Tests the core message module code generator in isolation:
 """
 
 import hashlib
-
-import ast
-import pytest
+import pathlib
 
 from zros2.generator._codegen._msg import (
     GeneratedFile,
@@ -28,14 +26,14 @@ from zros2.generator._parser import MsgDefinition, MsgField
 
 class TestGeneratedFile:
     def test_fields(self):
-        gf = GeneratedFile(path="a/b.py", content="code")
-        assert gf.path == "a/b.py"
+        gf = GeneratedFile(path=pathlib.Path("a/b.py"), content="code")
+        assert gf.path == pathlib.Path("a/b.py")
         assert gf.content == "code"
 
     def test_is_namedtuple(self):
-        gf = GeneratedFile(path="x.py", content="y")
+        gf = GeneratedFile(path=pathlib.Path("x.py"), content="y")
         p, c = gf
-        assert p == "x.py"
+        assert p == pathlib.Path("x.py")
         assert c == "y"
 
 
@@ -173,7 +171,7 @@ class TestGenerateMessageStructure:
                 fields=[MsgField(name="val", type_str="int32")],
             )
             code = generate_message_module(defn)
-            sha_line = [l for l in code.splitlines() if l.startswith("# SHA1:")][0]
+            sha_line = [line for line in code.splitlines() if line.startswith("# SHA1:")][0]
             sha_value = sha_line.split(": ", 1)[1]
             body = code.split("\n\n", 1)[1]
             expected = hashlib.sha1(body.encode("utf-8")).hexdigest()
@@ -474,8 +472,8 @@ class TestGenerateMessageEdgeCases:
         )
         code = generate_message_module(defn)
         lines = code.splitlines()
-        doc_lines = [l for l in lines if 'Auto-generated' in l]
-        assert any('srv' in l for l in doc_lines)
+        doc_lines = [line for line in lines if 'Auto-generated' in line]
+        assert any('srv' in line for line in doc_lines)
         assert "class Foo_Request(IdlStruct):" in code
 
     def test_optional_annotation_in_init_for_nested(self):
@@ -503,12 +501,12 @@ class TestGenerateMessageEdgeCases:
         assert "typing import Optional" not in code
 
     def test_constant_time_external_import(self):
-        """A ``time`` constant triggers an external import in generated code."""
-        defn = MsgDefinition(
-            package="test", type_name="WithTime", type_kind="msg",
-            constants=[MsgField(name="NOW", type_str="time",
-                                default="0", is_constant=True)],
-        )
-        code = generate_message_module(defn)
-        assert "builtin_interfaces" in code
-        assert code.count("builtin_interfaces") >= 1
+            """A ``time`` constant triggers an external import in generated code."""
+            defn = MsgDefinition(
+                package="test", type_name="WithTime", type_kind="msg",
+                constants=[MsgField(name="NOW", type_str="time",
+                                    default="0", is_constant=True)],
+            )
+            code = generate_message_module(defn)
+            assert "builtin_interfaces" in code
+            assert code.count("builtin_interfaces") >= 1

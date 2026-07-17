@@ -162,7 +162,7 @@ class TestFromDict:
         """Passing a non-dataclass type as cls should raise TypeError."""
         import pytest
         with pytest.raises(TypeError, match="Expected a ROS message type"):
-            from_dict(int, {"x": 1})
+            from_dict(int, {"x": 1})  # type: ignore[arg-type]
 
     # ── Optional fields ─────────────────────────────────────────
     def test_optional_field_wrong_type(self):

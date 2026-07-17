@@ -13,14 +13,13 @@ import pathlib
 import pytest
 
 from zros2.generator._parser import (
-    MsgField,
-    MsgDefinition,
     _strip_inline_comment,
     _is_valid_field_name,
     _is_valid_constant_name,
     _tokenise_field_line,
     _split_sections,
     parse_msg_text,
+    parse_msg_file,
     parse_srv_file,
     parse_action_file,
     iter_msg_files,
@@ -629,3 +628,385 @@ class TestFindMsgDirs:
         result = find_msg_dirs([tmp_path])
         assert pkg in result
         assert tmp_path not in result
+
+
+# ======================================================================
+# Boundary / edge-case tests
+# ======================================================================
+
+
+class TestStripInlineCommentBoundary:
+    """Additional boundary cases for inline comment stripping."""
+
+    def test_hash_after_closed_quotes(self):
+        """A string with # inside, followed by a real comment after quotes."""
+        result = _strip_inline_comment('string x = "safe#part"  # real comment')
+        assert result == 'string x = "safe#part"'
+
+    def test_consecutive_escaped_backslash_then_quote(self):
+        """A double-escaped backslash before a quote: \\" is not an escaped quote.
+
+        The first backslash escapes the second backslash, producing a literal
+        backslash in the output, and the quote is NOT escaped — so it toggles
+        the string state.
+        """
+        result = _strip_inline_comment('string x = "\\\\"  # comment')
+        # The four backslashes become two literal backslashes, then the quote
+        # closes the string, so the trailing # is stripped.
+        assert result == 'string x = "\\\\"'
+
+    def test_tab_before_hash_is_comment(self):
+        result = _strip_inline_comment("int32 x\t# tab before hash")
+        assert result == "int32 x"
+
+    def test_only_hash(self):
+        result = _strip_inline_comment("#")
+        assert result == ""
+
+    def test_unicode_in_comment_not_stripped_by_accident(self):
+        """Unicode characters in comments should be stripped normally."""
+        result = _strip_inline_comment("int32 x  # unicode: αβγ")
+        assert result == "int32 x"
+
+
+class TestIsValidFieldNameBoundary:
+    """Boundary cases: Unicode rejection, edge names."""
+
+    def test_unicode_letters_rejected(self):
+        """ROS 2 IDL only allows ASCII — Unicode must be rejected."""
+        assert not _is_valid_field_name("café")
+        assert not _is_valid_field_name("münchen")
+        assert not _is_valid_field_name("姓名")
+
+    def test_greek_letters_rejected(self):
+        assert not _is_valid_field_name("α")
+        assert not _is_valid_field_name("β_field")
+
+    def test_cyrillic_rejected(self):
+        assert not _is_valid_field_name("поле")
+
+    def test_single_character_alpha_valid(self):
+        assert _is_valid_field_name("a")
+        assert _is_valid_field_name("z")
+
+
+class TestIsValidConstantNameBoundary:
+    """Boundary cases: Unicode rejection for constants."""
+
+    def test_unicode_letters_rejected(self):
+        assert not _is_valid_constant_name("MAX_VALUÉ")
+        assert not _is_valid_constant_name("CAFÉ")
+
+    def test_greek_rejected(self):
+        assert not _is_valid_constant_name("ΜAX")
+
+
+class TestTokeniseFieldLineBoundary:
+    """Boundary cases for the line-level tokeniser."""
+
+    # -- Array defaults ------------------------------------------------
+
+    def test_array_fixed_with_default(self):
+        """Fixed-size array with a default value."""
+        field = _tokenise_field_line("int32[3] arr [1,2,3]")
+        assert field.name == "arr"
+        assert field.type_str == "int32[3]"
+        assert field.default == "[1,2,3]"
+        assert not field.is_constant
+
+    def test_array_variable_with_default(self):
+        """Variable-size array with a default value."""
+        field = _tokenise_field_line("int32[] arr [1,2,3]")
+        assert field.name == "arr"
+        assert field.type_str == "int32[]"
+        assert field.default == "[1,2,3]"
+
+    def test_array_fixed_with_default_spaces(self):
+        """Array default with spaces inside brackets."""
+        field = _tokenise_field_line("int32[3] arr [1, 2, 3]")
+        assert field.name == "arr"
+        assert field.default == "[1, 2, 3]"
+
+    # -- String defaults containing # -----------------------------------
+
+    def test_string_default_with_hash_single_quote(self):
+        """A # inside single-quoted default must NOT be treated as comment."""
+        field = _tokenise_field_line("string desc 'hello # world'")
+        assert field.name == "desc"
+        assert field.default == "'hello # world'"
+
+    def test_string_default_with_hash_double_quote(self):
+        """A # inside double-quoted default must NOT be treated as comment."""
+        field = _tokenise_field_line('string desc "hello # world"')
+        assert field.name == "desc"
+        assert field.default == '"hello # world"'
+
+    # -- Unicode identifier rejection -----------------------------------
+
+    def test_unicode_field_name_raises(self):
+        """A field name with Unicode characters must raise ValueError."""
+        with pytest.raises(ValueError, match="not a valid field name"):
+            _tokenise_field_line("float64 cafÃ©")
+
+    def test_unicode_constant_name_raises(self):
+        """A constant name with Unicode characters must raise ValueError."""
+        with pytest.raises(ValueError, match="not a valid field or constant"):
+            _tokenise_field_line("int32 VALUÃ‰=1")
+
+    # -- Constant edge cases --------------------------------------------
+
+    def test_constant_scientific_notation(self):
+        field = _tokenise_field_line("float64 E=1.5e-10")
+        assert field.is_constant
+        assert field.default == "1.5e-10"
+
+    def test_constant_string_with_equals_inside(self):
+        """A string constant with = inside the value (e.g. "a=b")."""
+        field = _tokenise_field_line("string EQUATION='a=b'")
+        assert field.is_constant
+        assert field.default == "'a=b'"
+
+    # -- Field with nested type -----------------------------------------
+
+    def test_nested_type_default(self):
+        field = _tokenise_field_line("std_msgs/Header header None")
+        assert field.name == "header"
+        assert field.default == "None"
+
+
+class TestSplitSectionsBoundary:
+    """Boundary cases for section splitting."""
+
+    def test_only_separators(self):
+        parts = _split_sections("---", maxsplit=1)
+        assert len(parts) == 2
+        assert parts[0] == ""
+        assert parts[1] == ""
+
+    def test_trailing_separator(self):
+        """Content followed by --- at end (no trailing newline)."""
+        parts = _split_sections("content\n---", maxsplit=1)
+        assert len(parts) == 2
+        assert parts[0] == "content\n"
+        assert parts[1] == ""
+
+    def test_leading_separator(self):
+        parts = _split_sections("---\ncontent", maxsplit=1)
+        assert len(parts) == 2
+        assert parts[0] == ""
+        assert parts[1] == "content"
+
+    def test_empty_text(self):
+        parts = _split_sections("", maxsplit=1)
+        assert len(parts) == 1
+        assert parts[0] == ""
+
+    def test_consecutive_separators(self):
+        parts = _split_sections("---\n---\n", maxsplit=2)
+        assert len(parts) == 3
+        assert parts[0] == ""
+        assert parts[1] == ""
+        assert parts[2] == ""
+
+    def test_windows_line_endings(self):
+        parts = _split_sections("a\r\n---\r\nb\r\n", maxsplit=1)
+        assert len(parts) == 2
+        assert "---" not in parts[0]
+        assert "---" not in parts[1]
+
+
+class TestParseMsgTextBoundary:
+    """Boundary cases for high-level message text parsing."""
+
+    def test_array_default_values(self):
+        """Array fields with defaults are correctly parsed."""
+        defn = parse_msg_text(
+            "int32[3] arr [1,2,3]\nfloat64[] vals []",
+            package="test", type_name="Arrays",
+        )
+        assert len(defn.fields) == 2
+        assert defn.fields[0].name == "arr"
+        assert defn.fields[0].default == "[1,2,3]"
+        assert defn.fields[1].name == "vals"
+        assert defn.fields[1].default == "[]"
+
+    def test_string_with_hash_default(self):
+        """A # inside a quoted default value must survive parsing."""
+        defn = parse_msg_text(
+            "string desc 'hello # world'",
+            package="test", type_name="WithHash",
+        )
+        assert len(defn.fields) == 1
+        assert defn.fields[0].default == "'hello # world'"
+
+    def test_unicode_field_name_rejected(self):
+        """A field name with Unicode must raise via parse_msg_text."""
+        with pytest.raises(ValueError, match="not a valid field name"):
+            parse_msg_text(
+                "float64 café",
+                package="test", type_name="Bad",
+            )
+
+    def test_preserves_leading_whitespace_inline_comment_after_quote(self):
+        """Trailing # comment after a complex quoted string."""
+        defn = parse_msg_text(
+            'string x = "data"  # end comment',
+            package="test", type_name="C",
+        )
+        assert len(defn.fields) == 1
+        assert defn.fields[0].default == '"data"'
+
+    def test_constant_and_field_with_same_type(self):
+        """Constants and fields using the same type are both parsed."""
+        defn = parse_msg_text(
+            "int32 SPEED=100\nint32 speed",
+            package="test", type_name="Car",
+        )
+        assert len(defn.constants) == 1
+        assert defn.constants[0].name == "SPEED"
+        assert len(defn.fields) == 1
+        assert defn.fields[0].name == "speed"
+
+    def test_only_comments_and_blank_lines(self):
+        defn = parse_msg_text(
+            "\n# comment\n  \n  # another\n\n",
+            package="test", type_name="Empty",
+        )
+        assert len(defn.fields) == 0
+        assert len(defn.constants) == 0
+
+
+class TestParseSrvBoundary:
+    """Boundary cases for service file parsing."""
+
+    def test_empty_response_section(self, tmp_path):
+        """Request has fields, response section is empty."""
+        path = tmp_path / "SetParam.srv"
+        path.write_text("string key\nstring value\n---\n")
+        req, resp = parse_srv_file(path, "test")
+        assert len(req.fields) == 2
+        assert len(resp.fields) == 0
+
+    def test_empty_request_section(self, tmp_path):
+        """Request section is empty, response has fields."""
+        path = tmp_path / "GetParam.srv"
+        path.write_text("\n---\nstring value\n")
+        req, resp = parse_srv_file(path, "test")
+        assert len(req.fields) == 0
+        assert len(resp.fields) == 1
+
+    def test_constants_in_both_sections(self, tmp_path):
+        """Both request and response can have constants."""
+        path = tmp_path / "Status.srv"
+        path.write_text("int32 REQ_CODE=1\nint32 data\n---\nint32 RESP_CODE=0\nbool ok\n")
+        req, resp = parse_srv_file(path, "test")
+        assert len(req.constants) == 1
+        assert len(resp.constants) == 1
+        assert resp.constants[0].name == "RESP_CODE"
+
+
+
+
+class TestParseActionBoundary:
+    """Boundary cases for action file parsing."""
+
+    def test_empty_sections(self, tmp_path):
+        """All three sections empty: ---\n---\n."""
+        path = tmp_path / "Empty.action"
+        path.write_text("---\n---\n")
+        results = parse_action_file(path, "test")
+        assert len(results) == 8
+        # Goal, Result, Feedback all have zero fields
+        for defn in results[:7]:
+            assert len(defn.fields) >= 0
+
+    def test_feedback_section_only(self, tmp_path):
+        """Only feedback section has fields; goal and result are empty."""
+        path = tmp_path / "FeedbackOnly.action"
+        path.write_text("\n---\n\n---\nfloat32 progress\n")
+        results = parse_action_file(path, "test")
+        feedback = next(r for r in results if r.type_name.endswith("_Feedback"))
+        assert len(feedback.fields) == 1
+        assert feedback.fields[0].name == "progress"
+
+    def test_result_section_with_constants(self, tmp_path):
+        """Result section has both constants and fields."""
+        path = tmp_path / "ResultConst.action"
+        path.write_text("---\nint32 CODE=42\nint32 value\n---\n")
+        results = parse_action_file(path, "test")
+        result = next(r for r in results if r.type_name.endswith("_Result"))
+        assert len(result.constants) == 1
+        assert result.constants[0].name == "CODE"
+        assert len(result.fields) == 1
+
+    def test_package_empty_raises(self, tmp_path):
+        """Action file with empty package must raise ValueError."""
+        path = tmp_path / "Bad.action"
+        path.write_text("---\n---\n")
+        with pytest.raises(ValueError, match="package name must not be empty"):
+            parse_action_file(path, "")
+
+    def test_srv_package_empty_raises(self, tmp_path):
+        path = tmp_path / "Bad.srv"
+        path.write_text("---\n")
+        with pytest.raises(ValueError, match="package name must not be empty"):
+            parse_srv_file(path, "")
+
+    def test_msg_package_empty_raises(self, tmp_path):
+        path = tmp_path / "Bad.msg"
+        path.write_text("int32 x\n")
+        with pytest.raises(ValueError, match="package name must not be empty"):
+            parse_msg_file(path, "")
+
+
+class TestParseFileErrorPaths:
+    """Coverage: error-context wrapping in parse_msg_file / parse_srv_file / parse_action_file."""
+
+    def test_parse_msg_file_error_includes_path(self, tmp_path):
+        """A bad .msg file must produce an error that includes the file path."""
+        path = tmp_path / "bad.msg"
+        path.write_text("@#$% invalid\n")
+        with pytest.raises(ValueError, match=str(path) + "|" + path.name):
+            parse_msg_file(path, "test")
+
+    def test_parse_srv_file_error_includes_path(self, tmp_path):
+        """A bad .srv file must produce an error that includes the file path."""
+        path = tmp_path / "bad.srv"
+        path.write_text("@#$% invalid\n---\n")
+        with pytest.raises(ValueError, match=str(path) + "|" + path.name):
+            parse_srv_file(path, "test")
+
+    def test_parse_srv_file_bad_request_raises(self, tmp_path):
+        """A .srv file with an invalid request section must raise ValueError."""
+        path = tmp_path / "bad_req.srv"
+        path.write_text("@#$% invalid\n---\nint32 ok\n")
+        with pytest.raises(ValueError):
+            parse_srv_file(path, "test")
+
+    def test_parse_srv_file_bad_response_raises(self, tmp_path):
+        """A .srv file with an invalid response section must raise ValueError."""
+        path = tmp_path / "bad_resp.srv"
+        path.write_text("int32 ok\n---\n@#$% invalid\n")
+        with pytest.raises(ValueError):
+            parse_srv_file(path, "test")
+
+    def test_parse_action_file_bad_goal_raises(self, tmp_path):
+        """A .action file with an invalid goal section must raise ValueError."""
+        path = tmp_path / "bad.action"
+        path.write_text("@#$% invalid\n---\n---\n")
+        with pytest.raises(ValueError):
+            parse_action_file(path, "test")
+
+    def test_parse_action_file_bad_result_raises(self, tmp_path):
+        """A .action file with an invalid result section must raise ValueError."""
+        path = tmp_path / "bad_res.action"
+        path.write_text("---\n@#$% invalid\n---\n")
+        with pytest.raises(ValueError):
+            parse_action_file(path, "test")
+
+    def test_parse_action_file_bad_feedback_raises(self, tmp_path):
+        """A .action file with an invalid feedback section must raise ValueError."""
+        path = tmp_path / "bad_fb.action"
+        path.write_text("---\n---\n@#$% invalid\n")
+        with pytest.raises(ValueError):
+            parse_action_file(path, "test")

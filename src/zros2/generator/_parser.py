@@ -112,6 +112,16 @@ _PYTHON_KEYWORDS: frozenset[str] = frozenset({
 })
 
 
+def _is_ascii_alpha(ch: str) -> bool:
+    """Check if *ch* is an ASCII letter (``a-z`` or ``A-Z``)."""
+    return "a" <= ch <= "z" or "A" <= ch <= "Z"
+
+
+def _is_ascii_alnum(ch: str) -> bool:
+    """Check if *ch* is an ASCII alphanumeric (``a-z``, ``A-Z``, or ``0-9``)."""
+    return _is_ascii_alpha(ch) or "0" <= ch <= "9"
+
+
 def _is_valid_field_name(name: str) -> bool:
     """Validate a ROS 2 field name per the interface spec.
 
@@ -122,10 +132,12 @@ def _is_valid_field_name(name: str) -> bool:
     * no trailing underscore
     * no consecutive underscores (``__``)
     * additionally, reject Python keywords so the generated code is valid.
+
+    Only ASCII letters are accepted (ROS 2 IDL does not permit Unicode).
     """
     if not name:
         return False
-    if not name[0].isalpha():
+    if not _is_ascii_alpha(name[0]):
         return False
     if name != name.lower():
         return False
@@ -136,7 +148,7 @@ def _is_valid_field_name(name: str) -> bool:
     if name in _PYTHON_KEYWORDS:
         return False
     for ch in name:
-        if not (ch.isalnum() or ch == "_"):
+        if not (_is_ascii_alnum(ch) or ch == "_"):
             return False
     return True
 
@@ -146,15 +158,17 @@ def _is_valid_constant_name(name: str) -> bool:
 
     Rules: UPPERCASE, start with alphabetic, contain only uppercase ASCII
     letters, digits and underscores.
+
+    Only ASCII letters are accepted (ROS 2 IDL does not permit Unicode).
     """
     if not name:
         return False
-    if not name[0].isalpha():
+    if not _is_ascii_alpha(name[0]):
         return False
     if name != name.upper():
         return False
     for ch in name:
-        if not (ch.isupper() or ch.isdigit() or ch == "_"):
+        if not (_is_ascii_alpha(ch) or ch.isdigit() or ch == "_"):
             return False
     return True
 
@@ -177,8 +191,15 @@ def _tokenise_field_line(line: str) -> MsgField:
     * **Constants** have ``=`` immediately after the name (no space before
       the ``=``).
 
-    For real-world leniency, ``TYPE name = value`` is also accepted as a
-    field with a default value (the ``=`` is simply stripped).
+    **Lenient mode (non-standard):** ``TYPE name = value`` is also accepted
+    as a field with a default value (the ``=`` is simply stripped). This is
+    common in ROS 1 heritage definitions but is not part of the ROS 2
+    interface specification.
+
+    * For **constants**, the ``=`` must be present after the name and triggers
+      constant detection when the name is ``UPPER_CASE`` on a primitive type.
+    * For **fields**, the default value follows the name separated by a space.
+      The ``=`` is tolerated for compatibility but is not mandatory.
 
     Raises:
         ValueError: If the line cannot be parsed, with a message explaining
@@ -339,6 +360,8 @@ def parse_msg_text(text: str, *, package: str = "",
 
 def parse_msg_file(file_path: pathlib.Path, package: str) -> MsgDefinition:
     """Parse a single ``.msg`` file."""
+    if not package:
+        raise ValueError("package name must not be empty")
     text = file_path.read_text(encoding="utf-8")
     try:
         return parse_msg_text(text, package=package,
@@ -354,6 +377,8 @@ def parse_srv_file(file_path: pathlib.Path,
     Returns:
         ``(request, response)`` pair of ``MsgDefinition``.
     """
+    if not package:
+        raise ValueError("package name must not be empty")
     text = file_path.read_text(encoding="utf-8")
     parts = _split_sections(text, maxsplit=1)
 
@@ -387,6 +412,8 @@ def parse_action_file(file_path: pathlib.Path,
     ``(Goal, Result, SendGoal_Request, SendGoal_Response,
       GetResult_Request, GetResult_Response, Feedback)``
     """
+    if not package:
+        raise ValueError("package name must not be empty")
     text = file_path.read_text(encoding="utf-8")
     parts = _split_sections(text, maxsplit=2)
 
@@ -456,11 +483,6 @@ def parse_action_file(file_path: pathlib.Path,
         }
     except ValueError as exc:
         raise ValueError(f"{file_path}: {exc}") from exc
-
-    # Remap namespaces from /msg/ (default in parse_msg_text) to /action/
-    for defn in definitions.values():
-        defn.full_name = defn.full_name.replace("/msg/", "/action/")
-        defn.type_kind = "action"
 
     return tuple(definitions.values())
 

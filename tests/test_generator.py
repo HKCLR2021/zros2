@@ -3,11 +3,6 @@
 import importlib.util
 import pathlib
 import sys
-import tempfile
-import typing
-from dataclasses import dataclass
-from unittest import mock
-
 import pytest
 
 from zros2.generator import (
@@ -17,7 +12,6 @@ from zros2.generator import (
     generate_message_module,
     generate_stub_module,
     parse_msg_text,
-    parse_msg_file,
     parse_srv_file,
     parse_action_file,
     resolve_type,
@@ -26,10 +20,8 @@ from zros2.generator import (
     MsgField,
 )
 from zros2.generator._codegen._orchestrator import (
-    BUILTIN_MSG_DIR,
     builtin_msg_dirs,
     _strip_wrappers,
-    _resolve_full_name,
 )
 
 from zros2.generator._utilities import (
@@ -216,7 +208,7 @@ class TestGenerateStubModule:
         )
         stub = generate_stub_module(defn)
         assert "class Point:" in stub
-        assert "def __init__(self, *, x: float=None, y: float=None) -> None:" in stub
+        assert "def __init__(self, *, x: float=0.0, y: float=0.0) -> None:" in stub
         assert "def serialize(self) -> bytes:" in stub
         assert "def deserialize(cls, data: bytes) -> Point:" in stub
         assert "from_dict" in stub
@@ -417,6 +409,7 @@ class TestResolveTypeEdgeCases:
             current_package="test",
             root_package="my_msgs",
         )
+        assert resolved.external_import is not None
         assert "my_msgs" in resolved.external_import
 
     def test_time_mapped(self):
@@ -511,6 +504,7 @@ class TestTypeMapEdgeCases:
     def test_unqualified_type_in_same_package(self):
         from zros2.generator._type_map import resolve_type
         resolved = resolve_type("String", current_package="my_pkg")
+        assert resolved.external_import is not None
         assert "my_pkg" in resolved.external_import
 
     def test_package_type_without_msg_kind(self):
@@ -528,8 +522,9 @@ class TestActionWrapperGeneration:
     def test_generate_action_wrappers(self):
         from zros2.generator._codegen._srv_action import _generate_action_wrappers
         from zros2.generator._codegen._msg import GeneratedFile
-        from zros2.generator._parser import MsgDefinition, MsgField
-        import tempfile, pathlib
+        from zros2.generator._parser import MsgDefinition
+        import tempfile
+        import pathlib
 
         def _make(name: str) -> MsgDefinition:
             return MsgDefinition(
@@ -559,7 +554,9 @@ class TestActionWrapperGeneration:
             assert len(files) == 2  # .py + .pyi
 
     def test_generated_action_wrapper_usable(self):
-        import tempfile, pathlib, sys
+        import tempfile
+        import pathlib
+        import sys
         from zros2.generator import (
             collect_all_types, generate_all, write_generated_files,
         )
@@ -675,7 +672,6 @@ class TestParseParserEdgeCases:
 
     def test_find_msg_dirs_with_msg_dir(self, tmp_path):
         """find_msg_dirs when base has msg/ subdir (line 351-352)."""
-        import pathlib
         from zros2.generator._parser import find_msg_dirs
         (tmp_path / "msg").mkdir()
         result = find_msg_dirs([tmp_path])
@@ -683,7 +679,6 @@ class TestParseParserEdgeCases:
 
     def test_find_msg_dirs_scans_subdirs(self, tmp_path):
         """find_msg_dirs scans subdirectories for msg/ (lines 355-357)."""
-        import pathlib
         from zros2.generator._parser import find_msg_dirs
         pkg_dir = tmp_path / "my_pkg"
         (pkg_dir / "msg").mkdir(parents=True)
@@ -735,7 +730,6 @@ class TestGeneratorEdgeCases:
 
     def test_collect_all_types_with_all_kinds(self, tmp_path):
         """collect_all_types handles msg, srv, and action dirs."""
-        import pathlib
         from zros2.generator._codegen._orchestrator import collect_all_types
         # Create a proper package directory so the name is predictable
         pkg_dir = tmp_path / "my_pkg"
@@ -753,7 +747,8 @@ class TestGeneratorEdgeCases:
 
     def test_generate_all_nothing_but_update_root_init(self):
         """generate_all produces root __init__ when no files exist (lines 210-216)."""
-        import pathlib, tempfile
+        import pathlib
+        import tempfile
         from zros2.generator._codegen._orchestrator import generate_all
         types = {}
         with tempfile.TemporaryDirectory() as tmp:
@@ -767,9 +762,7 @@ class TestGeneratorEdgeCases:
 
     def test_generate_all_with_existing_init(self, tmp_path):
         """_update_root_init appends to existing root __init__ (lines 204-208)."""
-        import pathlib
         from zros2.generator._codegen._orchestrator import generate_all
-        from zros2.generator._codegen._msg import GeneratedFile
         from zros2.generator._parser import MsgDefinition, MsgField
 
         types = {
@@ -829,6 +822,7 @@ class TestTypeMapEdgeCases2:
         # Type with 'msg' not in the path -> falls to else branch
         resolved = resolve_type("my_pkg/SomeType", current_package="test")
         assert resolved.annotation_expr == "SomeType"
+        assert resolved.external_import is not None
         assert "my_pkg.msg._some_type" in resolved.external_import
 
     def test_resolve_nested_multi_component_type(self):
@@ -877,7 +871,7 @@ class TestCLI:
 
     def test_main_dry_run(self, tmp_path):
         """main() with --dry-run prints would-generate and exits."""
-        import sys, pathlib
+        import sys
         from zros2.generator.__main__ import main
         from unittest import mock
 
@@ -897,7 +891,7 @@ class TestCLI:
 
     def test_main_full_generate(self, tmp_path):
         """main() generates files successfully."""
-        import sys, pathlib
+        import sys
         from zros2.generator.__main__ import main
         from unittest import mock
 
@@ -921,7 +915,7 @@ class TestCLI:
 
     def test_main_with_root_package(self, tmp_path):
         """main() with --root-package generates correct imports."""
-        import sys, pathlib
+        import sys
         from zros2.generator.__main__ import main
         from unittest import mock
 

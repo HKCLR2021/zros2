@@ -7,6 +7,7 @@ backed by pycdr2.IdlStruct for CDR serialization.
 
 import ast
 import pathlib
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from .._parser import MsgDefinition
@@ -23,7 +24,7 @@ class GeneratedFile:
     path: pathlib.Path
     content: str
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[pathlib.Path | str]:
         return iter((self.path, self.content))
 
 

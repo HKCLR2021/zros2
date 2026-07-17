@@ -34,7 +34,7 @@ class Publisher(Generic[_MsgT]):
             self._zenoh_session.declare_publisher(topic)
         )
 
-    def __enter__(self) -> 'Publisher[_MsgT]':
+    def __enter__(self) -> "Publisher[_MsgT]":
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):

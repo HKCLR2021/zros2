@@ -1,3 +1,10 @@
+"""Proxy wrapper for Zenoh sessions.
+
+``ZenohSessionProxy`` provides a safe read-only wrapper around a Zenoh
+session that prevents accidental closure or undeclaration of resources
+by components that only need read access to the session.
+"""
+
 from typing import Any
 
 import zenoh

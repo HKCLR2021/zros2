@@ -12,17 +12,20 @@ middleware. Message types are statically generated from `.msg` / `.srv` /
 
 ## Features
 
-- **Spec-compliant parser** — `.msg` / `.srv` / `.action` files are parsed with
-  a `Lark` EBNF grammar.  All 15 built-in types, fixed/bounded/unbounded
-  arrays, bounded strings, sequences with max-length, and nested type
-  references are recognised.
-- **Static message types** — generate Python dataclasses from ROS 2 interface
-  definitions with full IDE type hints (`.pyi` stubs included).
+- **Spec-compliant parser** — `.msg` / `.srv` / `.action` files are fully
+  parsed per the ROS 2 interface spec, including all 15 built-in types,
+  fixed/bounded/unbounded arrays, bounded strings, constant-reference bounds
+  (`int32[COUNT]`, `string<=MAX_LEN`, `sequence<uint8,N>`), and nested types.
+- **rclpy-compatible codegen** — type resolution and code emission matches
+  the behaviour of ROS 2's reference Python implementation.
+- **Static message types** — generate Python dataclasses with full IDE type
+  hints (`.pyi` stubs included).
 - **Zenoh transport** — publish, subscribe, service call, and action
   communication over Zenoh.
 - **Runtime type registry** — look up types by string name at runtime
   (`get_type`, `get_service`, `get_action`).
-- **CDR serialization** — via `pycdr2` (bounds enforced at serialisation).
+- **CDR serialization** — via `pycdr2`, with bounds enforced at
+  serialisation time.
 - **Protocols for type safety** — `RosMessage`, `RosService`, `RosAction`
   protocols for static type checking.
 - **Bundled ROS 2 definitions** — built-in types for Humble through Lyrical
@@ -38,38 +41,22 @@ pip install zros2
 
 ## Parser compliance
 
-The ``zros2-gen`` generator parses ROS 2 interface files using a
-[Lark](https://github.com/lark-parser/lark) EBNF grammar that conforms to the
+The ``zros2-gen`` generator parses ROS 2 interface files per the
 [ROS 2 Interface specification](https://docs.ros.org/en/humble/Concepts/Basic/About-Interfaces.html).
 
 ### Supported type forms
 
-| Category | Syntax | pycdr2 mapping | Bound checking |
-|----------|--------|----------------|----------------|
-| Primitives | `int32`, `float64`, `string`, `wstring`, … | native pycdr2 types | — |
-| Fixed array | `int32[3]` | `array[int32, 3]` | — |
-| Unbounded array | `int32[]` | `sequence[int32]` | — |
-| Bounded array | `int32[<=5]` | `sequence[int32, 5]` | ✅ serialise-time |
-| Bounded string | `string<=255` | `bounded_str[255]` | ✅ serialise-time |
-| Sequence | `sequence<uint8>` | `sequence[uint8]` | — |
-| Bounded sequence | `sequence<uint8,10>` | `sequence[uint8, 10]` | ✅ serialise-time |
-| Nested type | `std_msgs/String` | external import | — |
-
-### Validation
-
-- Field names: alphabetic start, no `__`, no trailing `_`, no Python keywords.
-- Constant names: UPPERCASE only, `=` immediately after the name.
-- Default values: space-separated per spec (`int32 x 42`); `name = value` also
-  accepted for compatibility.
-- `---` separators in ``.srv`` / ``.action`` files: only matched on lines by
-  themselves, never inside field values.
-
-### Code generation
-
-Generated Python modules are built entirely with the ``ast`` module — no string
-templating.  Constants become ``ClassVar`` annotations; fields are annotated
-with the corresponding pycdr2 types; bounded types are enforced by pycdr2 at
-serialisation time.
+| Category | Syntax | Bound checking |
+|----------|--------|----------------|
+| Primitives | `int32`, `float64`, `string`, `wstring`, … | — |
+| Fixed array | `int32[3]` | — |
+| Fixed array (const ref) | `int32[COUNT]` | — |
+| Unbounded array | `int32[]` | — |
+| Bounded array | `int32[<=5]` / `int32[<=MAX]` | ✅ serialise-time |
+| Bounded string | `string<=255` / `string<=MAX_LEN` | ✅ serialise-time |
+| Sequence | `sequence<uint8>` | — |
+| Bounded sequence | `sequence<uint8,10>` / `sequence<uint8,N>` | ✅ serialise-time |
+| Nested type | `std_msgs/String` | — |
 
 ### 1. Generate message types
 
@@ -105,23 +92,23 @@ etc.) for the selected distro are automatically bundled.
 from zros2 import Publisher, Subscriber
 from zros2_msgs.std_msgs.msg import String
 from zros2_msgs.builtin_interfaces.msg import Time
-from zros2_msgs.geometry_msgs.msg import Twist
+from zros2_msgs.geometry_msgs.msg import Twist, Vector3
 from zros2_msgs.my_package.msg import MyMessage
 
 # Publish
 pub = Publisher(session, topic="/chatter", message_type=String)
-pub.publish({"data": "hello"})
+pub.publish(String(data="hello"))
 
 # Publish nested types
 pub_twist = Publisher(session, topic="/cmd_vel", message_type=Twist)
-pub_twist.publish({
-    "linear": {"x": 0.5, "y": 0.0, "z": 0.0},
-    "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
-})
+pub_twist.publish(Twist(
+    linear=Vector3(x=0.5, y=0.0, z=0.0),
+    angular=Vector3(x=0.0, y=0.0, z=0.0),
+))
 
 # Subscribe
-def callback(data: dict):
-    print(f"Received: {data}")
+def callback(msg: MyMessage):
+    print(f"Received: {msg}")
 
 sub = Subscriber(session, topic="/battery", message_type=MyMessage)
 sub.subscribe(callback)
@@ -137,14 +124,14 @@ from zros2 import ServiceClient
 from zros2._types import ServiceTypes
 from zros2_msgs.my_package.srv import MyService
 
-# Using the wrapper class
+# Using the ServiceTypes container
 srv = ServiceClient(
     session,
     service_name="/add_two_ints",
     service_type=ServiceTypes(MyService.Request, MyService.Response),
 )
-result = srv.send_request({"a": 10, "b": 20})
-print(result)  # {"sum": 30}
+result = srv.send_request(MyService.Request(a=10, b=20))
+print(result)  # typed response, e.g. MyService.Response(sum=30)
 ```
 
 ### 4. Actions
@@ -170,7 +157,7 @@ action = Action(
 )
 
 # Send a goal and get the result
-goal_response = action.send_goal({"order": 10})
+goal_response = action.send_goal(Fibonacci.Goal(order=10))
 result = action.get_result()
 ```
 
@@ -178,14 +165,29 @@ result = action.get_result()
 
 ```python
 from zros2 import ZRosClient
+from zros2._types import ServiceTypes, ActionTypes
 from zros2_msgs.std_msgs.msg import String
+from zros2_msgs.my_package.srv import MyService
+from zros2_msgs.my_package.action import Fibonacci
 
 client = ZRosClient("./zenoh.json5")
 
 pub = client.create_publisher("/chatter", String, namespace="robot_01")
 sub = client.create_subscriber("/battery", String, namespace="robot_01")
-srv = client.create_srv_client("/add", service_type, namespace="robot_01")
-act = client.create_action_client("/fib", action_type, namespace="robot_01")
+srv = client.create_srv_client(
+    "/add", ServiceTypes(MyService.Request, MyService.Response),
+    namespace="robot_01",
+)
+act = client.create_action_client(
+    "/fib", ActionTypes(
+        send_goal_request=Fibonacci.SendGoal_Request,
+        send_goal_response=Fibonacci.SendGoal_Response,
+        get_result_request=Fibonacci.GetResult_Request,
+        get_result_response=Fibonacci.GetResult_Response,
+        feedback=Fibonacci.Feedback,
+    ),
+    namespace="robot_01",
+)
 ```
 
 ### 6. Runtime reflection

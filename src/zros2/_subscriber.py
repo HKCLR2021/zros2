@@ -39,7 +39,7 @@ class Subscriber(Generic[_MsgT]):
 
     # ── Context Manager Protocol ─────────────────────────────────────
 
-    def __enter__(self) -> 'Subscriber[_MsgT]':
+    def __enter__(self) -> "Subscriber[_MsgT]":
         """Enter the context manager.
 
         Returns:

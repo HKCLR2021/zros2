@@ -1,5 +1,7 @@
 """zros2 — lightweight ROS2-like communication over Zenoh."""
 
+from zenoh import SampleKind, Sample
+
 from ._action import Action
 from ._liveliness import Liveliness, LivelinessType
 from ._proxies import ZenohSessionProxy
@@ -17,7 +19,6 @@ from .exceptions import (
     ActionNotAvailableException,
     ActionInvokeException,
 )
-from zenoh import SampleKind, Sample
 
 __all__ = [
     "Action",

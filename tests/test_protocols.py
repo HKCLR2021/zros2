@@ -1,12 +1,13 @@
 """Tests for zros2.types.protocols."""
 
 from dataclasses import dataclass
-from typing import get_type_hints
+from typing import Any, get_type_hints
 
 from pycdr2 import IdlStruct
 from pycdr2._main import IdlMeta
 from pycdr2.types import int32, float64
-from zros2.types.protocols import RosMessage, RosService, RosAction
+from zros2.types import RosMessage
+from zros2.types.protocols import RosService, RosAction
 
 
 class TestRosMessageProtocol:
@@ -14,21 +15,22 @@ class TestRosMessageProtocol:
 
     def test_isinstance_check(self):
         """`isinstance` should work with @runtime_checkable."""
-        ns = IdlMeta.__prepare__("Point", (IdlStruct,), typename="test/Point")
+        ns: dict[str, Any] = dict(
+            IdlMeta.__prepare__("Point", (IdlStruct,), typename="test/Point")
+        )
         ns["__annotations__"] = {"x": int32, "y": float64}
         ns["x"] = 0
         ns["y"] = 0
-        from dataclasses import dataclass
         Point = dataclass(IdlMeta("Point", (IdlStruct,), ns))
 
         # Attach methods expected by RosMessage protocol
-        def _to_dict(self):
+        def _to_dict(self):  # type: ignore[no-untyped-def]
             return {"x": self.x, "y": self.y}
-        Point.to_dict = _to_dict
-        Point.from_dict = classmethod(lambda cls, d: cls(d["x"], d["y"]))
-        Point.from_attributes = classmethod(lambda cls, o: cls(o.x, o.y))
+        Point.to_dict = _to_dict  # type: ignore[attr-defined]
+        Point.from_dict = classmethod(lambda cls, d: cls(d["x"], d["y"]))  # type: ignore[attr-defined]
+        Point.from_attributes = classmethod(lambda cls, o: cls(o.x, o.y))  # type: ignore[attr-defined]
 
-        p = Point(x=1, y=2)
+        p = Point(x=1, y=2)  # type: ignore[call-arg]
         assert isinstance(p, RosMessage), (
             "RosMessage should recognize IdlStruct dataclass instances"
         )

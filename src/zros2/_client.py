@@ -35,19 +35,36 @@ from .types._base import (
 class ZRosClient:
     """ROS-like client using Zenoh as the communication middleware.
 
+    Accepts either a path to a Zenoh configuration file or a
+    :class:`zenoh.Config` object directly.
+
     Args:
-        config_path: Path to a Zenoh configuration file (JSON5).
+        config: Either a path (``str``) to a Zenoh configuration file
+            (JSON5) or a pre-built :class:`zenoh.Config` object.
 
     Raises:
-        FileNotFoundError: If the configuration file does not exist.
+        FileNotFoundError: If ``config`` is a ``str`` but the file does
+            not exist.
+        TypeError: If ``config`` is neither a ``str`` nor a
+            :class:`zenoh.Config`.
         zenoh.ZError: If Zenoh session cannot be opened.
     """
 
-    def __init__(self, config_path: str):
-        if not os.path.exists(config_path):
-            raise FileNotFoundError('Zenoh Config file not found')
+    def __init__(
+        self,
+        config: str | zenoh.Config,
+    ):
+        if isinstance(config, str):
+            if not os.path.exists(config):
+                raise FileNotFoundError("Zenoh Config file not found")
+            zenoh_config = zenoh.Config.from_file(config)
+        elif isinstance(config, zenoh.Config):
+            zenoh_config = config
+        else:
+            raise TypeError(
+                f"Expected str or zenoh.Config, got {type(config).__name__}"
+            )
 
-        zenoh_config = zenoh.Config.from_file(config_path)
         self._zenoh_session: zenoh.Session = zenoh.open(zenoh_config)
         self._session_proxy: ZenohSessionProxy = ZenohSessionProxy(self._zenoh_session)
 
