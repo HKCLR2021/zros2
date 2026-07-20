@@ -184,6 +184,7 @@ class TestGenerateMessageModule:
         assert "@classmethod" in code
         assert "def from_dict" in code
         assert "def __init__" in code
+        assert "__ros_name__: str = 'test/msg/Point'" in code
 
     def test_generated_code_is_valid_syntax(self):
         defn = MsgDefinition(
@@ -195,6 +196,22 @@ class TestGenerateMessageModule:
         )
         code = generate_message_module(defn)
         compile(code, "<test>", "exec")  # raises SyntaxError if invalid
+
+    def test_ros_name_value(self):
+        """__ros_name__ reflects package/type_kind/type_name."""
+        defn = MsgDefinition(
+            package="my_pkg", type_name="MyType", type_kind="msg",
+            fields=[MsgField(name="val", type_str="int32")],
+        )
+        code = generate_message_module(defn)
+        assert "__ros_name__: str = 'my_pkg/msg/MyType'" in code
+
+        defn_srv = MsgDefinition(
+            package="my_pkg", type_name="Foo_Request", type_kind="srv",
+            fields=[MsgField(name="val", type_str="int32")],
+        )
+        code_srv = generate_message_module(defn_srv)
+        assert "__ros_name__: str = 'my_pkg/srv/Foo_Request'" in code_srv
 
 
 class TestGenerateStubModule:
@@ -214,6 +231,7 @@ class TestGenerateStubModule:
         assert "from_dict" in stub
         assert "from_attributes" in stub
         assert "to_dict" in stub
+        assert "__ros_name__: str = 'test/msg/Point'" in stub
 
 
 # ======================================================================
@@ -259,6 +277,10 @@ class TestEndToEnd:
                 data = pose.serialize()
                 pose2 = Pose.deserialize(data)
                 assert abs(pose2.orientation - 1.0) < 1e-9
+
+                # __ros_name__ at runtime
+                assert Point.__ros_name__ == "test_pkg/msg/Point"
+                assert Pose.__ros_name__ == "test_pkg/msg/Pose"
             finally:
                 sys.path.pop(0)
 
@@ -290,6 +312,7 @@ class TestEndToEnd:
                     "std_msgs.msg._header"
                 ).Header
                 assert Header
+                assert Header.__ros_name__ == "std_msgs/msg/Header"
             finally:
                 sys.path.pop(0)
 
@@ -516,6 +539,45 @@ class TestTypeMapEdgeCases:
         assert "my_pkg.msg._header" in (resolved.external_import or "")
 
 
+class TestServiceWrapperGeneration:
+    """Cover service wrapper generation code paths."""
+
+    def test_generated_service_wrapper_usable(self):
+        import tempfile
+        import pathlib
+        import sys
+        from zros2.generator import (
+            collect_all_types, generate_all, write_generated_files,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            (srv_dir := tmp / "pkg" / "srv").mkdir(parents=True)
+            (srv_dir / "AddTwoInts.srv").write_text(
+                "int64 a\nint64 b\n---\nint64 sum\n"
+            )
+
+            user = collect_all_types([tmp / "pkg"])
+            out = tmp / "out"
+            files = generate_all(user, out)
+            write_generated_files(files)
+
+            sys.path.insert(0, str(out))
+            try:
+                _mod = importlib.import_module("pkg.srv._add_two_ints")
+                # __ros_name__ on wrapper and sub-types
+                assert _mod.AddTwoInts.__ros_name__ == "pkg/srv/AddTwoInts"
+                assert _mod.AddTwoInts_Request.__ros_name__ == "pkg/srv/AddTwoInts_Request"
+                assert _mod.AddTwoInts_Response.__ros_name__ == "pkg/srv/AddTwoInts_Response"
+            finally:
+                sys.path.pop(0)
+                # Clean up module cache to avoid interfering with subsequent
+                # tests that import from different "pkg" output directories.
+                for mod in list(sys.modules):
+                    if mod.startswith("pkg"):
+                        del sys.modules[mod]
+
+
 class TestActionWrapperGeneration:
     """Cover action wrapper generation code paths."""
 
@@ -591,8 +653,17 @@ class TestActionWrapperGeneration:
                 assert hasattr(_Do, "SendGoal_Response")
                 assert hasattr(_Do, "GetResult_Request")
                 assert hasattr(_Do, "GetResult_Response")
+
+                # __ros_name__ on wrapper and sub-types
+                assert _Do.__ros_name__ == "pkg/action/Do"
+                _mod = importlib.import_module("pkg.action._do")
+                assert _mod.Do_Goal.__ros_name__ == "pkg/action/Do_Goal"
+                assert _mod.Do_SendGoal_Request.__ros_name__ == "pkg/action/Do_SendGoal_Request"
             finally:
                 sys.path.pop(0)
+                for mod in list(sys.modules):
+                    if mod.startswith("pkg"):
+                        del sys.modules[mod]
 
 
 class TestDefaultExprEdgeCases:

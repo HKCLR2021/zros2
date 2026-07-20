@@ -386,6 +386,7 @@ def _wrapper_class_ast(
     type_class_names: list[str],
     *,
     has_defaults: bool,
+    full_name: str = "",
 ) -> ast.ClassDef:
     """Build a ``ClassVar[type[SubType]]`` wrapper class AST node.
 
@@ -397,6 +398,7 @@ def _wrapper_class_ast(
     The generated class looks like (runtime form)::
 
         class Foo:
+            __ros_name__: str = "package/srv/Foo"
             Request: ClassVar[type[Foo_Request]] = Foo_Request
             Response: ClassVar[type[Foo_Response]] = Foo_Response
 
@@ -417,11 +419,21 @@ def _wrapper_class_ast(
             ``True`` for the runtime ``.py`` — each annotated attribute gets
             ``= ClassName`` as its default value.
             ``False`` for the stub ``.pyi`` — only the annotation is emitted.
+        full_name:
+            The fully-qualified ROS 2 name (e.g. ``"package/srv/Foo"``).
+            When provided, a ``__ros_name__`` class attribute is emitted.
 
     Returns:
         An ``ast.ClassDef`` node that can be injected into the merged module.
     """
     body: list[ast.stmt] = []
+    if full_name:
+        body.append(ast.AnnAssign(
+            target=ast.Name(id="__ros_name__"),
+            annotation=ast.Name(id="str"),
+            value=ast.Constant(value=full_name),
+            simple=1,
+        ))
     for attr, cls_name in zip(attr_names, type_class_names):
         ann = ast.Subscript(
             value=ast.Name(id="ClassVar"),
@@ -515,6 +527,7 @@ def _generate_service_wrappers(
         # Build the runtime wrapper class with default-value assignments.
         wrapper_cls = _wrapper_class_ast(
             base, attr_names, type_class_names, has_defaults=True,
+            full_name=full_name,
         )
         classvar_import = ast.ImportFrom(
             module="typing",
@@ -554,6 +567,7 @@ def _generate_service_wrappers(
                 classvar_import,
                 _wrapper_class_ast(
                     base, attr_names, type_class_names, has_defaults=False,
+                    full_name=full_name,
                 ),
             ],
             module_doc=f"Auto-generated ROS 2 service: {full_name}.",
@@ -654,6 +668,7 @@ def _generate_action_wrappers(
         # Build the runtime wrapper class with default-value assignments.
         wrapper_cls = _wrapper_class_ast(
             base, attr_names, type_class_names, has_defaults=True,
+            full_name=full_name,
         )
         classvar_import = ast.ImportFrom(
             module="typing",
@@ -695,6 +710,7 @@ def _generate_action_wrappers(
                 classvar_import,
                 _wrapper_class_ast(
                     base, attr_names, type_class_names, has_defaults=False,
+                    full_name=full_name,
                 ),
             ],
             module_doc=f"Auto-generated ROS 2 action: {full_name}.",

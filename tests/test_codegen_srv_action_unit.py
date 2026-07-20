@@ -8,8 +8,6 @@ Tests the service/action wrapper generation in isolation:
 """
 
 import ast
-import pathlib
-import pytest
 
 from zros2.generator._codegen._srv_action import (
     _SRV_SUFFIXES,
@@ -100,6 +98,19 @@ class TestWrapperClassAST:
         assert "class Foo:" in code
         assert "Request: ClassVar[type[Foo_Request]] = Foo_Request" in code
         assert "Response: ClassVar[type[Foo_Response]] = Foo_Response" in code
+        assert "__ros_name__" not in code  # no full_name → no __ros_name__
+
+    def test_structure_with_full_name(self):
+        node = _wrapper_class_ast(
+            "Foo", ["Request", "Response"],
+            ["Foo_Request", "Foo_Response"],
+            has_defaults=True,
+            full_name="pkg/srv/Foo",
+        )
+        code = ast.unparse(node)
+        assert "class Foo:" in code
+        assert "__ros_name__: str = 'pkg/srv/Foo'" in code
+        assert "Request: ClassVar[type[Foo_Request]] = Foo_Request" in code
 
     def test_structure_without_defaults(self):
         node = _wrapper_class_ast(
@@ -116,9 +127,11 @@ class TestWrapperClassAST:
             "DoAction", ["Goal", "Result", "Feedback"],
             ["DoAction_Goal", "DoAction_Result", "DoAction_Feedback"],
             has_defaults=True,
+            full_name="pkg/action/DoAction",
         )
         code = ast.unparse(node)
         assert "class DoAction:" in code
+        assert "__ros_name__: str = 'pkg/action/DoAction'" in code
         assert "Goal: ClassVar[type[DoAction_Goal]] = DoAction_Goal" in code
         assert "Result: ClassVar[type[DoAction_Result]] = DoAction_Result" in code
 
@@ -406,6 +419,7 @@ class TestGenerateServiceWrappers:
         assert "class Bar:" in py_content
         assert "Request: ClassVar[type[Bar_Request]] = Bar_Request" in py_content
         assert "Response: ClassVar[type[Bar_Response]] = Bar_Response" in py_content
+        assert "__ros_name__: str = 'pkg/srv/Bar'" in py_content
 
     def test_generated_code_syntax(self, tmp_path):
         sub = tmp_path / "srv"
@@ -505,6 +519,7 @@ class TestGenerateActionWrappers:
         assert "Goal: ClassVar[type[Do_Goal]] = Do_Goal" in py_content
         assert "Result: ClassVar[type[Do_Result]] = Do_Result" in py_content
         assert "Feedback: ClassVar[type[Do_Feedback]] = Do_Feedback" in py_content
+        assert "__ros_name__: str = 'pkg/action/Do'" in py_content
 
     def test_generated_code_syntax(self, tmp_path):
         sub = tmp_path / "action"

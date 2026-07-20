@@ -8,8 +8,10 @@ Tests the core message module code generator in isolation:
 - Generated code can be compiled and produces valid dataclass-like classes
 """
 
+import ast
 import hashlib
 import pathlib
+from typing import Any
 
 from zros2.generator._codegen._msg import (
     GeneratedFile,
@@ -186,6 +188,7 @@ class TestGenerateMessageStructure:
         assert "__generated__ = True" in code
         assert "zros2-gen v" in code
         assert "__source__ = 'test/msg/Point.msg'" in code
+        assert "__ros_name__: str = 'test/msg/Point'" in code
 
     def test_metadata_not_in_annotations(self):
         """Module-level metadata (__generated__, __generator__, __source__)
@@ -510,3 +513,451 @@ class TestGenerateMessageEdgeCases:
             code = generate_message_module(defn)
             assert "builtin_interfaces" in code
             assert code.count("builtin_interfaces") >= 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# to_dict / from_dict runtime correctness
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _clean(code: str) -> str:
+    """Remove imports that won't resolve outside a full ROS package tree."""
+    kept: list[str] = []
+    for line in code.splitlines():
+        if line.startswith("from ") and not any(
+            line.startswith(f"from {p}")
+            for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections")
+        ):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _exec_class(code: str, name: str | None = None) -> type:
+    """Compile and exec generated source, return the generated class.
+
+    If *name* is given, return that class by name.  Otherwise find it by
+    looking for a type that has ``__ros_name__`` (a dunder set by the codegen
+    on every generated message class).
+    """
+    ns: dict[str, Any] = {}
+    exec(compile(ast.parse(_clean(code)), "<test>", "exec"), ns)
+    if name:
+        return ns[name]
+    for v in ns.values():
+        if isinstance(v, type) and hasattr(v, "__ros_name__"):
+            return v
+    raise RuntimeError("no generated class found")
+
+
+def _exec_pair(code_a: str, code_b: str,
+               name_a: str, name_b: str) -> tuple[type, type]:
+    """Exec two generated modules in the same namespace (cross-ref support).
+
+    Returns ``(type_a, type_b)`` by their expected class names.
+    """
+    ns: dict[str, Any] = {}
+    exec(compile(ast.parse(_clean(code_a)), "<a>", "exec"), ns)
+    exec(compile(ast.parse(_clean(code_b)), "<b>", "exec"), ns)
+    return ns[name_a], ns[name_b]
+
+
+class TestGeneratedToDictFromDict:
+    """Execute generated to_dict/from_dict and verify correctness."""
+
+    def test_flat_message(self):
+        """Primitive fields: to_dict returns correct dict, from_dict roundtrips."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="Point", type_kind="msg",
+            fields=[
+                MsgField(name="x", type_str="float64"),
+                MsgField(name="y", type_str="float64"),
+                MsgField(name="label", type_str="string"),
+            ],
+        ))
+        Point = _exec_class(code, "Point")
+        p = Point(x=1.5, y=2.5, label="origin")
+
+        d = p.to_dict()
+        assert d == {"x": 1.5, "y": 2.5, "label": "origin"}
+
+        p2 = Point.from_dict(d)
+        assert p2.x == 1.5
+        assert p2.y == 2.5
+        assert p2.label == "origin"
+
+    def test_array_field(self):
+        """Primitive array field: to_dict returns list, from_dict roundtrips."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="WithArray", type_kind="msg",
+            fields=[
+                MsgField(name="values", type_str="float64[]"),
+                MsgField(name="id", type_str="int32"),
+            ],
+        ))
+        Cls = _exec_class(code, "WithArray")
+        obj = Cls(values=[1.0, 2.0, 3.0], id=42)
+
+        d = obj.to_dict()
+        assert d == {"values": [1.0, 2.0, 3.0], "id": 42}
+
+        obj2 = Cls.from_dict(d)
+        assert obj2.id == 42
+        assert list(obj2.values) == [1.0, 2.0, 3.0]
+
+    def test_nested_message(self):
+        """Nested message field: to_dict/from_dict recurse correctly."""
+        inner_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Inner", type_kind="msg",
+            fields=[
+                MsgField(name="x", type_str="float64"),
+                MsgField(name="y", type_str="float64"),
+            ],
+        ))
+        outer_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Outer", type_kind="msg",
+            fields=[
+                MsgField(name="inner", type_str="nest/Inner"),
+                MsgField(name="label", type_str="string"),
+            ],
+        ))
+        Inner, Outer = _exec_pair(inner_code, outer_code, "Inner", "Outer")
+
+        obj = Outer(inner=Inner(x=1.0, y=2.0), label="pt")
+        d = obj.to_dict()
+        assert d == {"inner": {"x": 1.0, "y": 2.0}, "label": "pt"}
+
+        obj2 = Outer.from_dict(d)
+        assert obj2.label == "pt"
+        assert obj2.inner.x == 1.0
+        assert obj2.inner.y == 2.0
+
+    def test_nested_array(self):
+        """Sequence of nested messages: list comprehension in to_dict/from_dict."""
+        inner_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Item", type_kind="msg",
+            fields=[
+                MsgField(name="val", type_str="int32"),
+                MsgField(name="name", type_str="string"),
+            ],
+        ))
+        outer_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Container", type_kind="msg",
+            fields=[
+                MsgField(name="items", type_str="sequence<nest/Item>"),
+                MsgField(name="id", type_str="int32"),
+            ],
+        ))
+        Item, Container = _exec_pair(inner_code, outer_code, "Item", "Container")
+
+        obj = Container(items=[Item(val=1, name="a"), Item(val=2, name="b")], id=99)
+        d = obj.to_dict()
+        assert d == {"items": [{"val": 1, "name": "a"}, {"val": 2, "name": "b"}], "id": 99}
+
+        obj2 = Container.from_dict(d)
+        assert obj2.id == 99
+        assert len(obj2.items) == 2
+        assert obj2.items[0].val == 1
+        assert obj2.items[1].name == "b"
+
+    def test_fixed_array_uint8(self):
+        """Fixed-size primitive array (e.g. uint8[16] for UUID)."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="UUID", type_kind="msg",
+            fields=[MsgField(name="uuid", type_str="uint8[16]")],
+        ))
+        Cls = _exec_class(code, "UUID")
+        obj = Cls(uuid=(0,) * 16)
+        d = obj.to_dict()
+        assert "uuid" in d
+        assert len(d["uuid"]) == 16
+
+        obj2 = Cls.from_dict(d)
+        assert len(obj2.uuid) == 16
+
+    def test_all_field_types_roundtrip(self):
+        """Message with every primitive type — comprehensive roundtrip."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="AllTypes", type_kind="msg",
+            fields=[
+                MsgField(name="a", type_str="int32"),
+                MsgField(name="b", type_str="float64"),
+                MsgField(name="c", type_str="string"),
+                MsgField(name="d", type_str="bool"),
+                MsgField(name="e", type_str="float64[]"),
+                MsgField(name="f", type_str="uint8[4]"),
+            ],
+        ))
+        Cls = _exec_class(code, "AllTypes")
+        obj = Cls(a=42, b=3.14, c="hello", d=True, e=[1.0, 2.0], f=(10, 20, 30, 40))
+
+        d = obj.to_dict()
+        assert d["a"] == 42
+        assert d["b"] == 3.14
+        assert d["c"] == "hello"
+        assert d["d"] is True
+        assert list(d["e"]) == [1.0, 2.0]
+        assert len(d["f"]) == 4
+
+        obj2 = Cls.from_dict(d)
+        assert obj2.a == 42
+        assert abs(obj2.b - 3.14) < 1e-9
+        assert obj2.c == "hello"
+        assert obj2.d is True
+
+    def test_empty_array(self):
+        """Sequence field with empty list."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="EmptyArr", type_kind="msg",
+            fields=[
+                MsgField(name="values", type_str="float64[]"),
+                MsgField(name="id", type_str="int32"),
+            ],
+        ))
+        Cls = _exec_class(code, "EmptyArr")
+        obj = Cls(values=[], id=0)
+
+        d = obj.to_dict()
+        assert d == {"values": [], "id": 0}
+
+        obj2 = Cls.from_dict({"values": [], "id": 0})
+        assert obj2.id == 0
+        assert list(obj2.values) == []
+
+    def test_bounded_string(self):
+        """Bounded string field (string<=N)."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="Bounded", type_kind="msg",
+            fields=[MsgField(name="name", type_str="string<=128")],
+        ))
+        Cls = _exec_class(code, "Bounded")
+        obj = Cls(name="hello")
+
+        d = obj.to_dict()
+        assert d == {"name": "hello"}
+
+        obj2 = Cls.from_dict({"name": "world"})
+        assert obj2.name == "world"
+
+    def test_from_dict_missing_key(self):
+        """from_dict with missing field raises KeyError."""
+        import pytest
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="WithField", type_kind="msg",
+            fields=[MsgField(name="x", type_str="int32"),
+                    MsgField(name="y", type_str="int32")],
+        ))
+        Cls = _exec_class(code, "WithField")
+        with pytest.raises(KeyError):
+            Cls.from_dict({"x": 1})
+
+    def test_wide_nesting_roundtrip(self):
+        """Outer with 3 inner branches — exercises multiple nested calls."""
+        inner_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Leaf", type_kind="msg",
+            fields=[MsgField(name="val", type_str="int32")],
+        ))
+        outer_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Wide", type_kind="msg",
+            fields=[
+                MsgField(name="left", type_str="nest/Leaf"),
+                MsgField(name="right", type_str="nest/Leaf"),
+                MsgField(name="center", type_str="nest/Leaf"),
+            ],
+        ))
+        Leaf, Wide = _exec_pair(inner_code, outer_code, "Leaf", "Wide")
+
+        obj = Wide(left=Leaf(val=1), right=Leaf(val=2), center=Leaf(val=3))
+        d = obj.to_dict()
+        assert d == {"left": {"val": 1}, "right": {"val": 2}, "center": {"val": 3}}
+
+        obj2 = Wide.from_dict(d)
+        assert obj2.left.val == 1
+        assert obj2.right.val == 2
+        assert obj2.center.val == 3
+
+    def test_to_dict_from_dict_roundtrip_identity(self):
+        """Roundtrip to_dict → from_dict preserves all values."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="Rt", type_kind="msg",
+            fields=[
+                MsgField(name="a", type_str="int32"),
+                MsgField(name="b", type_str="float64"),
+                MsgField(name="c", type_str="string"),
+                MsgField(name="d", type_str="bool"),
+            ],
+        ))
+        Cls = _exec_class(code, "Rt")
+        original = Cls(a=1, b=2.0, c="x", d=True)
+        restored = Cls.from_dict(original.to_dict())
+        assert restored.a == 1
+        assert restored.b == 2.0
+        assert restored.c == "x"
+        assert restored.d is True
+
+    def test_deep_chain_roundtrip(self):
+        """3-level deep chain: Outer → Mid → Inner."""
+        leaf_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Leaf", type_kind="msg",
+            fields=[MsgField(name="val", type_str="int32")],
+        ))
+        mid_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Mid", type_kind="msg",
+            fields=[
+                MsgField(name="child", type_str="nest/Leaf"),
+                MsgField(name="val", type_str="int32"),
+            ],
+        ))
+        top_code = generate_message_module(MsgDefinition(
+            package="nest", type_name="Top", type_kind="msg",
+            fields=[
+                MsgField(name="child", type_str="nest/Mid"),
+                MsgField(name="val", type_str="int32"),
+            ],
+        ))
+        ns: dict = {}
+        for src in (leaf_code, mid_code, top_code):
+            kept = [line for line in src.splitlines() if not line.startswith("from ") or any(
+                        line.startswith(f"from {p}") for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections"))]
+            exec(compile(ast.parse("\n".join(kept)), "<gen>", "exec"), ns)
+
+        obj = ns["Top"](child=ns["Mid"](child=ns["Leaf"](val=1), val=2), val=3)
+        d = obj.to_dict()
+        assert d == {"child": {"child": {"val": 1}, "val": 2}, "val": 3}
+
+        obj2 = ns["Top"].from_dict(d)
+        assert obj2.val == 3
+        assert obj2.child.val == 2
+        assert obj2.child.child.val == 1
+
+    def test_large_array_roundtrip(self):
+        """Array with 100 elements."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="Large", type_kind="msg",
+            fields=[MsgField(name="values", type_str="float64[]")],
+        ))
+        Cls = _exec_class(code, "Large")
+        data = [float(i) for i in range(100)]
+        obj = Cls(values=data)
+
+        d = obj.to_dict()
+        assert len(d["values"]) == 100
+        assert d["values"][0] == 0.0
+        assert d["values"][99] == 99.0
+
+        obj2 = Cls.from_dict(d)
+        assert len(obj2.values) == 100
+
+    def test_bounded_sequence_roundtrip(self):
+        """Bounded sequence (sequence<T,N>)."""
+        code = generate_message_module(MsgDefinition(
+            package="test", type_name="BoundedSeq", type_kind="msg",
+            fields=[
+                MsgField(name="vals", type_str="sequence<int32,10>"),
+                MsgField(name="id", type_str="int32"),
+            ],
+        ))
+        Cls = _exec_class(code, "BoundedSeq")
+        obj = Cls(vals=[1, 2, 3], id=99)
+
+        d = obj.to_dict()
+        assert d == {"vals": [1, 2, 3], "id": 99}
+
+        obj2 = Cls.from_dict({"vals": [4, 5], "id": 0})
+        assert list(obj2.vals) == [4, 5]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# from_attributes runtime correctness
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Codegen robustness
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestCodegenRobustness:
+    """Verify error handling in codegen helper functions."""
+
+    def test_is_container_type_true(self):
+        """Array/sequence type strings return True."""
+        from zros2.generator._codegen._msg import _is_container_type
+
+        assert _is_container_type("int32[]") is True
+        assert _is_container_type("float64[3]") is True
+        assert _is_container_type("sequence<uint8>") is True
+        assert _is_container_type("sequence<Point,10>") is True
+        assert _is_container_type("int32[<=5]") is True
+
+    def test_is_container_type_false(self):
+        """Scalar type strings return False."""
+        from zros2.generator._codegen._msg import _is_container_type
+
+        assert _is_container_type("int32") is False
+        assert _is_container_type("float64") is False
+        assert _is_container_type("string") is False
+        assert _is_container_type("string<=128") is False
+
+    def test_is_container_type_malformed(self):
+        """Unparseable type strings return False without crashing."""
+        from zros2.generator._codegen._msg import _is_container_type
+
+        assert _is_container_type("") is False
+        assert _is_container_type("int32[") is False
+        assert _is_container_type("sequence<") is False
+        assert _is_container_type("!!!") is False
+
+    def test_generate_invalid_class_name_raises(self):
+        """Empty or malformed type_name raises ValueError."""
+        import pytest
+        from zros2.generator._codegen._msg import generate_message_module
+        from zros2.generator._parser import MsgDefinition
+
+        with pytest.raises(ValueError, match="Invalid type_name"):
+            generate_message_module(MsgDefinition(
+                package="test", type_name="", type_kind="msg",
+            ))
+
+        with pytest.raises(ValueError, match="Invalid type_name"):
+            generate_message_module(MsgDefinition(
+                package="test", type_name="/", type_kind="msg",
+            ))
+
+
+class TestFromAttributes:
+    """Exercise ``from_attributes`` on generated message types."""
+
+    def test_flat_message(self):
+        """Object with matching attributes."""
+        from tests._test_msgs import IntMsg
+
+        obj = type("Obj", (), {"data": 42})()
+        result = IntMsg.from_attributes(obj)
+        assert result.data == 42
+
+    def test_two_fields(self):
+        """Object with two matching attributes."""
+        from tests._test_msgs import PairMsg
+
+        obj = type("Obj", (), {"value": 7, "label": "test"})()
+        result = PairMsg.from_attributes(obj)
+        assert result.value == 7
+        assert result.label == "test"
+
+    def test_missing_field_raises(self):
+        """Object missing a required field raises KeyError."""
+        import pytest
+        from tests._test_msgs import PairMsg
+
+        obj = type("Obj", (), {"value": 1})()
+        with pytest.raises(KeyError):
+            PairMsg.from_attributes(obj)
+
+    def test_wrong_type_raises(self):
+        """Object field with incompatible type raises TypeError."""
+        import pytest
+        from tests._test_msgs import IntMsg
+
+        obj = type("Obj", (), {"data": "not an int"})()
+        with pytest.raises(TypeError):
+            IntMsg.from_attributes(obj)

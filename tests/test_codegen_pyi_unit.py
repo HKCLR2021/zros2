@@ -121,7 +121,7 @@ class TestGenerateStubStructure:
         assert "def deserialize(cls, data: bytes) -> Point:" in stub
         assert "def from_dict" in stub
         assert "def from_attributes" in stub
-        assert "def to_dict(self) -> dict[str, object]:" in stub
+        assert "def to_dict(self) -> dict[str, Any]:" in stub
 
     def test_header_present(self):
         defn = MsgDefinition(

@@ -133,26 +133,7 @@ def generate_stub_module(
     needs_sequence = False
     return_annotation = ast.Name(id=class_name)
 
-    # -- Field annotations (AnnAssign nodes) -------------------------------
-    for field in defn.fields:
-        resolved = resolve_type(
-            field.type_str,
-            current_package=defn.package,
-            root_package=root_package,
-        )
-        native = _stub_annotation(resolved.annotation_expr)
-        if "sequence" in resolved.annotation_expr:
-            needs_sequence = True
-        if resolved.external_import:
-            ext_imports.append(resolved.external_import)
-        body.append(ast.AnnAssign(
-            target=ast.Name(id=field.name),
-            annotation=ast.parse(native, mode="eval").body,
-            value=None,
-            simple=1,
-        ))
-
-    # -- Constant annotations (ClassVar-wrapped) ---------------------------
+    # -- Constant annotations (ClassVar-wrapped) -----------------------------
     for const in defn.constants:
         resolved = resolve_type(
             const.type_str,
@@ -173,10 +154,120 @@ def generate_stub_module(
         if resolved.external_import:
             ext_imports.append(resolved.external_import)
 
-    # -- __init__ signature ------------------------------------------------
-    # kw_defaults MUST have the same length as kwonlyargs, otherwise
-    # ast.unparse raises ValueError.  Every field defaults to None so
-    # the constructor is fully keyword-optional, just like the runtime.
+    # -- Field annotations (AnnAssign nodes) -------------------------------
+    for field in defn.fields:
+        resolved = resolve_type(
+            field.type_str,
+            current_package=defn.package,
+            root_package=root_package,
+        )
+        native = _stub_annotation(resolved.annotation_expr)
+        if "sequence" in resolved.annotation_expr:
+            needs_sequence = True
+        if resolved.external_import:
+            ext_imports.append(resolved.external_import)
+        body.append(ast.AnnAssign(
+            target=ast.Name(id=field.name),
+            annotation=ast.parse(native, mode="eval").body,
+            value=None,
+            simple=1,
+        ))
+
+    # -- __ros_name__ (dunder for full ROS 2 qualified name) ----------------
+    body.append(ast.AnnAssign(
+        target=ast.Name(id="__ros_name__"),
+        annotation=ast.Name(id="str"),
+        value=ast.Constant(value=defn.full_name),
+        simple=1,
+    ))
+
+    # -- __annotations__ override (mirrors _msg.py Phase 4) -----------------
+    ann_keys: list[ast.expr | None] = [ast.Constant(value=f.name) for f in defn.fields]
+    ann_values = [
+        ast.parse(_stub_annotation(resolve_type(
+            f.type_str, current_package=defn.package,
+            root_package=root_package,
+        ).annotation_expr), mode="eval").body
+        for f in defn.fields
+    ]
+    body.append(ast.Assign(
+        targets=[ast.Name(id="__annotations__")],
+        value=ast.Dict(keys=ann_keys, values=ann_values),
+    ))
+
+    # -- Methods (mirroring _msg.py Phase 5) --------------------------------
+    body.append(ast.FunctionDef(
+        name="to_dict",
+        args=ast.arguments(
+            posonlyargs=[], args=[ast.arg(arg="self")],
+            kwonlyargs=[], kw_defaults=[], defaults=[],
+        ),
+        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
+        decorator_list=[],
+        returns=ast.Subscript(
+            value=ast.Name(id="dict"),
+            slice=ast.Tuple(elts=[ast.Name(id="str"), ast.Name(id="Any")]),
+        ),
+    ))
+
+    body.append(ast.FunctionDef(
+        name="from_dict",
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[
+                ast.arg(arg="cls"),
+                ast.arg(arg="data", annotation=ast.Subscript(
+                    value=ast.Name(id="dict"),
+                    slice=ast.Tuple(elts=[ast.Name(id="str"), ast.Name(id="Any")]),
+                )),
+            ],
+            kwonlyargs=[], kw_defaults=[], defaults=[],
+        ),
+        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
+        decorator_list=[ast.Name(id="classmethod")],
+        returns=return_annotation,
+    ))
+
+    body.append(ast.FunctionDef(
+        name="from_attributes",
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[
+                ast.arg(arg="cls"),
+                ast.arg(arg="obj", annotation=ast.Name(id="Any")),
+            ],
+            kwonlyargs=[], kw_defaults=[], defaults=[],
+        ),
+        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
+        decorator_list=[ast.Name(id="classmethod")],
+        returns=return_annotation,
+    ))
+
+    # -- serialize / deserialize (inherited from IdlStruct) ------------------
+    body.append(ast.FunctionDef(
+        name="serialize",
+        args=ast.arguments(
+            posonlyargs=[], args=[ast.arg(arg="self")],
+            kwonlyargs=[], kw_defaults=[], defaults=[],
+        ),
+        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
+        decorator_list=[],
+        returns=ast.Name(id="bytes"),
+    ))
+
+    body.append(ast.FunctionDef(
+        name="deserialize",
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[ast.arg(arg="cls"), ast.arg(arg="data", annotation=ast.Name(id="bytes"))],
+            kwonlyargs=[], kw_defaults=[], defaults=[],
+        ),
+        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
+        decorator_list=[ast.Name(id="classmethod")],
+        returns=return_annotation,
+    ))
+
+    # -- __init__ signature (last — must come after all methods) -------------
     init_params: list[ast.arg] = []
     for field in defn.fields:
         resolved = resolve_type(
@@ -220,81 +311,11 @@ def generate_stub_module(
             returns=ast.Constant(value=None),
         ))
 
-    # -- Methods mirroring _msg.py -----------------------------------------
-    body.append(ast.FunctionDef(
-        name="serialize",
-        args=ast.arguments(
-            posonlyargs=[], args=[ast.arg(arg="self")],
-            kwonlyargs=[], kw_defaults=[], defaults=[],
-        ),
-        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
-        decorator_list=[],
-        returns=ast.Name(id="bytes"),
-    ))
-
-    body.append(ast.FunctionDef(
-        name="deserialize",
-        args=ast.arguments(
-            posonlyargs=[],
-            args=[ast.arg(arg="cls"), ast.arg(arg="data", annotation=ast.Name(id="bytes"))],
-            kwonlyargs=[], kw_defaults=[], defaults=[],
-        ),
-        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
-        decorator_list=[ast.Name(id="classmethod")],
-        returns=return_annotation,
-    ))
-
-    body.append(ast.FunctionDef(
-        name="from_dict",
-        args=ast.arguments(
-            posonlyargs=[],
-            args=[
-                ast.arg(arg="cls"),
-                ast.arg(arg="data", annotation=ast.Subscript(
-                    value=ast.Name(id="dict"),
-                    slice=ast.Tuple(elts=[ast.Name(id="str"), ast.Name(id="object")]),
-                )),
-            ],
-            kwonlyargs=[], kw_defaults=[], defaults=[],
-        ),
-        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
-        decorator_list=[ast.Name(id="classmethod")],
-        returns=return_annotation,
-    ))
-
-    body.append(ast.FunctionDef(
-        name="from_attributes",
-        args=ast.arguments(
-            posonlyargs=[],
-            args=[
-                ast.arg(arg="cls"),
-                ast.arg(arg="obj", annotation=ast.Name(id="Any")),
-            ],
-            kwonlyargs=[], kw_defaults=[], defaults=[],
-        ),
-        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
-        decorator_list=[ast.Name(id="classmethod")],
-        returns=return_annotation,
-    ))
-
-    body.append(ast.FunctionDef(
-        name="to_dict",
-        args=ast.arguments(
-            posonlyargs=[], args=[ast.arg(arg="self")],
-            kwonlyargs=[], kw_defaults=[], defaults=[],
-        ),
-        body=[ast.Expr(value=ast.Constant(value=Ellipsis))],
-        decorator_list=[],
-        returns=ast.Subscript(
-            value=ast.Name(id="dict"),
-            slice=ast.Tuple(elts=[ast.Name(id="str"), ast.Name(id="object")]),
-        ),
-    ))
-
     # -- Collect all imports -----------------------------------------------
     if needs_sequence:
         ext_imports.append("from collections.abc import Sequence")
     ext_imports.append("from typing import Any")
+    ext_imports.append("from dataclasses import dataclass")
     ext_imports = sorted(set(ext_imports))
 
     # -- Assemble the module AST -------------------------------------------
@@ -321,7 +342,13 @@ def generate_stub_module(
         name=class_name,
         bases=[], keywords=[],
         body=body,
-        decorator_list=[],
+        decorator_list=[
+            ast.Call(
+                func=ast.Name(id="dataclass"),
+                args=[],
+                keywords=[ast.keyword(arg="init", value=ast.Constant(False))],
+            ),
+        ],
     ))
 
     full_module = ast.fix_missing_locations(ast.Module(

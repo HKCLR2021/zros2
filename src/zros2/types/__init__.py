@@ -6,7 +6,7 @@ containers, and serialization helpers for ROS 2 message types.
 Usage::
 
     from zros2.types import RosMessage, ServiceTypes, ActionTypes
-    from zros2.types.utils import from_attributes, from_dict, to_dict
+    from zros2.types.utils import from_attributes
 """
 
 from . import utils

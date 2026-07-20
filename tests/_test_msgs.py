@@ -2,18 +2,14 @@
 
 These types follow the same pattern as the generated code:
 ``@dataclass(init=False)`` + hand-written ``__init__`` + explicit
-``__annotations__`` override via plain assignment (to work around pycdr2's
-``IdlMeta.__prepare__`` which clears ``__annotations__`` on Python 3.12+).
+``__annotations__`` override with hardcoded ``to_dict``/``from_dict``.
 """
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar
 
 from pycdr2 import IdlStruct
-
 from zros2.types.utils import from_attributes as _from_attributes
-from zros2.types.utils import from_dict as _from_dict
-from zros2.types.utils import to_dict as _to_dict
 
 
 @dataclass(init=False)
@@ -22,22 +18,20 @@ class StringMsg(IdlStruct):
 
     data: str
 
-    # Explicit __annotations__ override — pycdr2 reads this for CDR encoding.
-    # Plain assignment (not annotation) to match code generator's Phase 5.
     __annotations__ = {"data": str}  # type: ignore[assignment]
 
     def __init__(self, *, data: str = "") -> None:
         self.data = data
 
     def to_dict(self) -> dict[str, Any]:
-        return _to_dict(self)
+        return {"data": self.data}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return _from_dict(cls, data)
+    def from_dict(cls, data: dict[str, Any]) -> "StringMsg":
+        return cls(data=data["data"])
 
     @classmethod
-    def from_attributes(cls, obj: Any) -> Self:
+    def from_attributes(cls, obj: Any) -> "StringMsg":
         return _from_attributes(cls, obj)
 
 
@@ -53,14 +47,14 @@ class IntMsg(IdlStruct):
         self.data = data
 
     def to_dict(self) -> dict[str, Any]:
-        return _to_dict(self)
+        return {"data": self.data}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return _from_dict(cls, data)
+    def from_dict(cls, data: dict[str, Any]) -> "IntMsg":
+        return cls(data=data["data"])
 
     @classmethod
-    def from_attributes(cls, obj: Any) -> Self:
+    def from_attributes(cls, obj: Any) -> "IntMsg":
         return _from_attributes(cls, obj)
 
 
@@ -78,25 +72,19 @@ class PairMsg(IdlStruct):
         self.label = label
 
     def to_dict(self) -> dict[str, Any]:
-        return _to_dict(self)
+        return {"value": self.value, "label": self.label}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
-        return _from_dict(cls, data)
+    def from_dict(cls, data: dict[str, Any]) -> "PairMsg":
+        return cls(value=data["value"], label=data["label"])
 
     @classmethod
-    def from_attributes(cls, obj: Any) -> Self:
+    def from_attributes(cls, obj: Any) -> "PairMsg":
         return _from_attributes(cls, obj)
 
 
-# ── Service Types ───────────────────────────────────────────────────
-
-
 class ExampleService:
-    """Minimal service type for testing request/response.
-
-    Satisfies the ``RosService`` protocol via ``ClassVar`` attributes.
-    """
+    """Minimal service type for testing request/response."""
 
     Request: ClassVar[type[IntMsg]] = IntMsg  # type: ignore[valid-type]
     Response: ClassVar[type[PairMsg]] = PairMsg  # type: ignore[valid-type]
