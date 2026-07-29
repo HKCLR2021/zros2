@@ -21,10 +21,9 @@ The parser recognises every valid ROS 2 type form::
 """
 
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 from lark import Lark, Token, Tree
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Grammar
@@ -63,6 +62,7 @@ INT: /[0-9]+/
 # Data model
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class TypeInfo:
     """Structured representation of a ROS 2 type expression.
@@ -86,6 +86,7 @@ class TypeInfo:
     Size fields (``string_max``, ``array_size``, ``array_max``) hold either
     an ``int`` (for literal bounds) or a ``str`` (for constant references).
     """
+
     base_name: str
     is_bounded_string: bool = False
     string_max: int | str | None = None
@@ -93,8 +94,8 @@ class TypeInfo:
     # One of: None, "unbounded", "fixed", "bounded",
     #         "unbounded_sequence", "bounded_sequence"
     kind: str | None = None
-    array_size: int | str | None = None    # for fixed_array
-    array_max: int | str | None = None     # for bounded_array / bounded_sequence
+    array_size: int | str | None = None  # for fixed_array
+    array_max: int | str | None = None  # for bounded_array / bounded_sequence
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -124,7 +125,8 @@ def parse_type(type_str: str) -> TypeInfo:
 # Internal tree walker
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _walk(node: Tree | Token) -> TypeInfo:
+
+def _walk(node: Tree[Any] | Token) -> TypeInfo:
     """Recursive tree → TypeInfo."""
     if isinstance(node, Token):
         return TypeInfo(base_name=str(node))
@@ -148,7 +150,7 @@ def _walk(node: Tree | Token) -> TypeInfo:
     return TypeInfo(base_name=str(children[0]) if children else "")
 
 
-def _walk_type(children: list[Tree | Token]) -> TypeInfo:
+def _walk_type(children: list[Tree[Any] | Token]) -> TypeInfo:
     """Walk a ``type`` node.
 
     Possible shapes::
@@ -167,7 +169,7 @@ def _walk_type(children: list[Tree | Token]) -> TypeInfo:
         return TypeInfo(base_name=str(child))
 
     # Two children: base + array suffix
-    base_node = cast(Tree, children[0])
+    base_node = cast(Tree[Any], children[0])
     suffix = children[1]
     info = _walk_base(base_node.children)
     arr = _walk(suffix)  # This retrieves kind/array_size/array_max
@@ -177,7 +179,7 @@ def _walk_type(children: list[Tree | Token]) -> TypeInfo:
     return info
 
 
-def _walk_base(children: list[Tree | Token]) -> TypeInfo:
+def _walk_base(children: list[Tree[Any] | Token]) -> TypeInfo:
     """Walk a ``base`` node.
 
     ``base`` is either a ``PRIMITIVE`` token, or an ``IDENTIFIER`` token
@@ -193,7 +195,7 @@ def _walk_base(children: list[Tree | Token]) -> TypeInfo:
         info = TypeInfo(base_name=base_name)
         if base_name in ("string", "wstring") and len(children) > 1:
             # Has size_mod child → Tree("size_mod", ["<=", size_token])
-            size_tree = cast(Tree, children[1])
+            size_tree = cast(Tree[Any], children[1])
             # size_expr is inlined, so the value token is the last child
             info.is_bounded_string = True
             info.string_max = _resolve_size_value(cast(Token, size_tree.children[-1]))
@@ -212,7 +214,7 @@ def _resolve_size_value(token: Token) -> int | str:
     return str(token)
 
 
-def _walk_sequence(children: list[Tree | Token]) -> TypeInfo:
+def _walk_sequence(children: list[Tree[Any] | Token]) -> TypeInfo:
     """Walk a ``sequence`` node.
 
     Shape::
@@ -220,15 +222,14 @@ def _walk_sequence(children: list[Tree | Token]) -> TypeInfo:
         [Tree("base", ...)]              — unbounded sequence
         [Tree("base", ...), INT|IDENT]   — bounded sequence
     """
-    base_info = _walk_base(cast(Tree, children[0]).children)
+    base_info = _walk_base(cast(Tree[Any], children[0]).children)
     base_info.kind = "bounded_sequence" if len(children) > 1 else "unbounded_sequence"
     if len(children) > 1:
         base_info.array_max = _resolve_size_value(cast(Token, children[1]))
     return base_info
 
 
-def _walk_array(children: list[Tree | Token], *,
-                kind: str) -> TypeInfo:
+def _walk_array(children: list[Tree[Any] | Token], *, kind: str) -> TypeInfo:
     """Walk an array-suffix node."""
     info = TypeInfo(base_name="")
     info.kind = kind
@@ -247,9 +248,22 @@ def _walk_array(children: list[Tree | Token], *,
 # Convenience
 # ═══════════════════════════════════════════════════════════════════════════
 
-ROS2_PRIMITIVE_TYPES: frozenset[str] = frozenset({
-    "bool", "byte", "char",
-    "int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64",
-    "float32", "float64",
-    "string", "wstring",
-})
+ROS2_PRIMITIVE_TYPES: frozenset[str] = frozenset(
+    {
+        "bool",
+        "byte",
+        "char",
+        "int8",
+        "uint8",
+        "int16",
+        "uint16",
+        "int32",
+        "uint32",
+        "int64",
+        "uint64",
+        "float32",
+        "float64",
+        "string",
+        "wstring",
+    }
+)

@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator._codegen._init``.
+"""Component-level tests for ``zros2.generator.codegen.package_init``.
 
 Tests the ``__init__.py`` code generators in isolation:
 - ``generate_init_module`` — per-subdirectory init files
@@ -6,17 +6,16 @@ Tests the ``__init__.py`` code generators in isolation:
 """
 
 import ast
-import pytest
 
-from zros2.generator._codegen._init import (
+from zros2.generator.codegen.package_init import (
     generate_init_module,
     generate_package_init,
 )
 
-
 # ======================================================================
 # generate_init_module — per-subdirectory __init__.py
 # ======================================================================
+
 
 class TestGenerateInitModule:
     """Tests for ``msg/__init__.py``, ``srv/__init__.py``, etc."""
@@ -72,21 +71,42 @@ class TestGenerateInitModule:
 
     def test_type_to_file_mapping(self):
         result = generate_init_module(
-            "pkg", "srv", ["Foo_Request", "Foo_Response"],
+            "pkg",
+            "srv",
+            ["Foo_Request", "Foo_Response"],
             type_to_file={"Foo_Request": "_foo", "Foo_Response": "_foo"},
         )
         assert "from ._foo import Foo_Request" in result
         assert "from ._foo import Foo_Response" in result
 
     def test_root_package_in_registry_import(self):
-        result = generate_init_module("pkg", "msg", ["Point"],
-                                      root_package="zros2_msgs")
+        result = generate_init_module(
+            "pkg", "msg", ["Point"], root_package="zros2_msgs"
+        )
         assert "zros2_msgs._registry" in result
 
     def test_register_calls_for_each_type(self):
         result = generate_init_module("pkg", "msg", ["A", "B"])
         assert "pkg/msg/A" in result
         assert "pkg/msg/B" in result
+
+    def test_all_present_with_type_names(self):
+        result = generate_init_module("pkg", "msg", ["Point"])
+        assert "__all__ = ['Point']" in result
+
+    def test_all_list_all_types_sorted(self):
+        result = generate_init_module("pkg", "msg", ["Z", "A", "M"])
+        assert "__all__ = ['A', 'M', 'Z']" in result
+
+    def test_all_absent_with_empty_types(self):
+        result = generate_init_module("pkg", "msg", [])
+        assert "__all__" not in result
+
+    def test_all_present_for_srv_and_action(self):
+        srv_result = generate_init_module("pkg", "srv", ["Foo"])
+        assert "__all__ = ['Foo']" in srv_result
+        act_result = generate_init_module("pkg", "action", ["Bar"])
+        assert "__all__ = ['Bar']" in act_result
 
     def test_output_syntax(self):
         result = generate_init_module("pkg", "msg", ["Point"])
@@ -102,6 +122,7 @@ class TestGenerateInitModule:
 # ======================================================================
 # generate_package_init — package-level __init__.py
 # ======================================================================
+
 
 class TestGeneratePackageInit:
     """Tests for the top-level package ``__init__.py``."""

@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator._codegen._registry``.
+"""Component-level tests for ``zros2.generator.codegen.registry``.
 
 Tests the pre-built registry AST in isolation:
 - The ``_REGISTRY_AST`` module-level constant unparses to valid Python
@@ -7,13 +7,13 @@ Tests the pre-built registry AST in isolation:
 
 import ast
 
-from zros2.generator._codegen._registry import (
-    _REGISTRY_AST,
+from zros2.generator.codegen.registry import (
+    REGISTRY_AST,
+    _reg_action_section,
     _reg_header,
+    _reg_helper,
     _reg_message_section,
     _reg_service_section,
-    _reg_action_section,
-    _reg_helper,
 )
 
 
@@ -32,6 +32,7 @@ def _unparse_stmts(stmts: list[ast.stmt]) -> str:
 # ======================================================================
 # Section builders
 # ======================================================================
+
 
 class TestRegHeader:
     def test_returns_imports_and_docstring(self):
@@ -121,19 +122,20 @@ class TestRegHelper:
 
 
 # ======================================================================
-# _REGISTRY_AST — full module
+# REGISTRY_AST — full module
 # ======================================================================
+
 
 class TestRegistryAST:
     def test_is_ast_module(self):
-        assert isinstance(_REGISTRY_AST, ast.Module)
+        assert isinstance(REGISTRY_AST, ast.Module)
 
     def test_unparses_to_valid_python(self):
-        code = ast.unparse(_REGISTRY_AST)
+        code = ast.unparse(REGISTRY_AST)
         compile(code, "<registry>", "exec")
 
     def test_contains_all_functions(self):
-        code = ast.unparse(_REGISTRY_AST)
+        code = ast.unparse(REGISTRY_AST)
         assert "def register(" in code
         assert "def get_type(" in code
         assert "def has_type(" in code
@@ -145,18 +147,18 @@ class TestRegistryAST:
         assert "def _raise_not_found(" in code
 
     def test_contains_all_dicts(self):
-        code = ast.unparse(_REGISTRY_AST)
+        code = ast.unparse(REGISTRY_AST)
         assert "_TYPES" in code
         assert "_SERVICES" in code
         assert "_ACTIONS" in code
 
     def test_header_present(self):
-        code = ast.unparse(_REGISTRY_AST)
+        code = ast.unparse(REGISTRY_AST)
         assert "Runtime type registry" in code
 
     def test_section_order(self):
         """Dicts should be defined before they're referenced by functions."""
-        code = ast.unparse(_REGISTRY_AST)
+        code = ast.unparse(REGISTRY_AST)
         types_pos = code.index("_TYPES")
         register_pos = code.index("def register(")
         assert types_pos < register_pos

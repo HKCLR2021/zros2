@@ -19,8 +19,12 @@ avoids ad-hoc formatting logic in this layer.
 
 import ast
 
-from ._msg import _registry_import
-from .._utilities import _generated_metadata_stmts, _header_comment, _to_snake_case
+from ..semantics.utilities import (
+    generated_metadata_stmts,
+    header_comment,
+    to_snake_case,
+)
+from .message import registry_import
 
 
 def generate_init_module(
@@ -51,15 +55,23 @@ def generate_init_module(
     if not type_names:
         # Emit a stub so the directory remains a valid Python package even
         # when it contains no definitions (e.g. an empty ``msg/``).
-        body.append(ast.Expr(value=ast.Constant(
-            value=f"Auto-generated ROS 2 type index for {package}/{subdir}.",
-        )))
+        body.append(
+            ast.Expr(
+                value=ast.Constant(
+                    value=f"Auto-generated ROS 2 type index for {package}/{subdir}.",
+                )
+            )
+        )
         body.append(ast.Pass())
     else:
         # Opening docstring identifying the generated file.
-        body.append(ast.Expr(value=ast.Constant(
-            value=f"Auto-generated ROS 2 type index for {package}/{subdir}.",
-        )))
+        body.append(
+            ast.Expr(
+                value=ast.Constant(
+                    value=f"Auto-generated ROS 2 type index for {package}/{subdir}.",
+                )
+            )
+        )
 
         # Map a type name to the file stem that contains it.  When the caller
         # provides an explicit lookup table we honour it; otherwise we derive
@@ -67,15 +79,29 @@ def generate_init_module(
         def _file_stem(name: str) -> str:
             if type_to_file and name in type_to_file:
                 return type_to_file[name]
-            return f"_{_to_snake_case(name)}"
+            return f"_{to_snake_case(name)}"
 
         # Re-export every type from its individual module.
         for name in sorted(type_names):
-            body.append(ast.ImportFrom(
-                module=f".{_file_stem(name)}",
-                names=[ast.alias(name=name)],
-                level=0,
-            ))
+            body.append(
+                ast.ImportFrom(
+                    module=f".{_file_stem(name)}",
+                    names=[ast.alias(name=name)],
+                    level=0,
+                )
+            )
+
+        # Explicit ``__all__`` so that ``from pkg.msg import *`` and IDEs
+        # see the intended public API surface.
+        body.append(
+            ast.Assign(
+                targets=[ast.Name(id="__all__")],
+                value=ast.List(
+                    elts=[ast.Constant(value=n) for n in sorted(type_names)],
+                    ctx=ast.Load(),
+                ),
+            )
+        )
 
         # The ``msg`` subdirectory is special: generated message types must be
         # registered with the run-time lookup table so that ROS 2 string names
@@ -83,25 +109,31 @@ def generate_init_module(
         # dynamically.  The import path depends on whether this is a built-in
         # package or a user package (controlled by *root_package*).
         if subdir == "msg":
-            ri = _registry_import(root_package)
-            body.append(ast.ImportFrom(
-                module=ri,
-                names=[ast.alias(name="register", asname="_register")],
-                level=0,
-            ))
+            ri = registry_import(root_package)
+            body.append(
+                ast.ImportFrom(
+                    module=ri,
+                    names=[ast.alias(name="register", asname="_register")],
+                    level=0,
+                )
+            )
             for name in sorted(type_names):
                 full_name = f"{package}/{subdir}/{name}"
-                body.append(ast.Expr(value=ast.Call(
-                    func=ast.Name(id="_register"),
-                    args=[
-                        ast.Name(id=name),
-                        ast.Constant(value=full_name),
-                    ],
-                    keywords=[],
-                )))
+                body.append(
+                    ast.Expr(
+                        value=ast.Call(
+                            func=ast.Name(id="_register"),
+                            args=[
+                                ast.Name(id=name),
+                                ast.Constant(value=full_name),
+                            ],
+                            keywords=[],
+                        )
+                    )
+                )
 
     # ── Module-level metadata (inserted after imports) ──────────────────
-    meta = _generated_metadata_stmts()
+    meta = generated_metadata_stmts()
     insert_pos = 0
     for i, stmt in enumerate(body):
         if isinstance(stmt, (ast.ImportFrom, ast.Import)):
@@ -112,11 +144,14 @@ def generate_init_module(
     # Assemble the AST, fix node locations so ``ast.unparse`` produces valid
     # code (``fix_missing_locations`` supplies ``lineno`` / ``col_offset``),
     # then prepend the standard header comment (license, generation notice).
-    module = ast.fix_missing_locations(ast.Module(
-        body=body, type_ignores=[],
-    ))
+    module = ast.fix_missing_locations(
+        ast.Module(
+            body=body,
+            type_ignores=[],
+        )
+    )
     content = ast.unparse(module)
-    return _header_comment(content, distro=distro) + content
+    return header_comment(content, distro=distro) + content
 
 
 def generate_package_init(package: str, subdirs: list[str], distro: str = "") -> str:
@@ -135,18 +170,24 @@ def generate_package_init(package: str, subdirs: list[str], distro: str = "") ->
     output.
     """
     body: list[ast.stmt] = []
-    body.append(ast.Expr(value=ast.Constant(
-        value=f"Package: {package}.",
-    )))
+    body.append(
+        ast.Expr(
+            value=ast.Constant(
+                value=f"Package: {package}.",
+            )
+        )
+    )
     for sd in sorted(set(subdirs)):
-        body.append(ast.ImportFrom(
-            module=".",
-            names=[ast.alias(name=sd)],
-            level=0,
-        ))
+        body.append(
+            ast.ImportFrom(
+                module=".",
+                names=[ast.alias(name=sd)],
+                level=0,
+            )
+        )
 
     # ── Module-level metadata (inserted after imports) ──────────────────
-    meta = _generated_metadata_stmts()
+    meta = generated_metadata_stmts()
     insert_pos = 0
     for i, stmt in enumerate(body):
         if isinstance(stmt, (ast.ImportFrom, ast.Import)):
@@ -154,8 +195,11 @@ def generate_package_init(package: str, subdirs: list[str], distro: str = "") ->
     for i, s in enumerate(meta):
         body.insert(insert_pos + i, s)
 
-    module = ast.fix_missing_locations(ast.Module(
-        body=body, type_ignores=[],
-    ))
+    module = ast.fix_missing_locations(
+        ast.Module(
+            body=body,
+            type_ignores=[],
+        )
+    )
     content = ast.unparse(module)
-    return _header_comment(content, distro=distro) + content
+    return header_comment(content, distro=distro) + content

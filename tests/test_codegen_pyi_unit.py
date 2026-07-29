@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator._codegen._pyi``.
+"""Component-level tests for ``zros2.generator.codegen.stubs``.
 
 Tests the stub (``.pyi``) generator in isolation:
 - ``_stub_annotation`` type translation
@@ -7,22 +7,19 @@ Tests the stub (``.pyi``) generator in isolation:
 - Import deduplication and annotation correctness
 """
 
+import ast
 import hashlib
 
-import ast
-import pytest
-
-from zros2.generator._codegen._pyi import (
+from zros2.generator.codegen.stubs import (
     _stub_annotation,
-    _make_stub_field,
     generate_stub_module,
 )
-from zros2.generator._parser import MsgDefinition, MsgField
-
+from zros2.generator.parsing.models import MsgDefinition, MsgField
 
 # ======================================================================
 # _stub_annotation — CDR annotation → pure-Python type hint
 # ======================================================================
+
 
 class TestStubAnnotation:
     """Translating pycdr2 annotation expressions to native Python types."""
@@ -94,10 +91,13 @@ class TestStubAnnotation:
 # generate_stub_module — structure checks
 # ======================================================================
 
+
 class TestGenerateStubStructure:
     def test_class_name(self):
         defn = MsgDefinition(
-            package="test", type_name="Point", type_kind="msg",
+            package="test",
+            type_name="Point",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="float64")],
         )
         stub = generate_stub_module(defn)
@@ -105,7 +105,9 @@ class TestGenerateStubStructure:
 
     def test_init_signature(self):
         defn = MsgDefinition(
-            package="test", type_name="Point", type_kind="msg",
+            package="test",
+            type_name="Point",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="float64")],
         )
         stub = generate_stub_module(defn)
@@ -113,7 +115,9 @@ class TestGenerateStubStructure:
 
     def test_methods_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Point", type_kind="msg",
+            package="test",
+            type_name="Point",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="float64")],
         )
         stub = generate_stub_module(defn)
@@ -125,7 +129,9 @@ class TestGenerateStubStructure:
 
     def test_header_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[],
         )
         stub = generate_stub_module(defn)
@@ -134,11 +140,13 @@ class TestGenerateStubStructure:
     def test_header_sha1(self):
         """SHA1 hash in header matches the stub body content."""
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="float64")],
         )
         stub = generate_stub_module(defn)
-        sha_line = [l for l in stub.splitlines() if l.startswith("# SHA1:")][0]
+        sha_line = next(l for l in stub.splitlines() if l.startswith("# SHA1:"))
         sha_value = sha_line.split(": ", 1)[1]
         body = stub.split("\n\n", 1)[1]
         expected = hashlib.sha1(body.encode("utf-8")).hexdigest()
@@ -146,7 +154,9 @@ class TestGenerateStubStructure:
 
     def test_generated_metadata_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Point", type_kind="msg",
+            package="test",
+            type_name="Point",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="float64")],
         )
         stub = generate_stub_module(defn)
@@ -159,10 +169,13 @@ class TestGenerateStubStructure:
 # generate_stub_module — field annotation correctness
 # ======================================================================
 
+
 class TestGenerateStubFields:
     def test_primitive_field_type(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="int32")],
         )
         stub = generate_stub_module(defn)
@@ -170,7 +183,9 @@ class TestGenerateStubFields:
 
     def test_float_field_type(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="float64")],
         )
         stub = generate_stub_module(defn)
@@ -178,7 +193,9 @@ class TestGenerateStubFields:
 
     def test_string_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="name", type_str="string")],
         )
         stub = generate_stub_module(defn)
@@ -186,7 +203,9 @@ class TestGenerateStubFields:
 
     def test_bool_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="flag", type_str="bool")],
         )
         stub = generate_stub_module(defn)
@@ -194,7 +213,9 @@ class TestGenerateStubFields:
 
     def test_array_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="values", type_str="float64[3]")],
         )
         stub = generate_stub_module(defn)
@@ -202,7 +223,9 @@ class TestGenerateStubFields:
 
     def test_sequence_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="data", type_str="sequence<uint8>")],
         )
         stub = generate_stub_module(defn)
@@ -210,7 +233,9 @@ class TestGenerateStubFields:
 
     def test_sequence_import_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="data", type_str="sequence<uint8>")],
         )
         stub = generate_stub_module(defn)
@@ -218,7 +243,9 @@ class TestGenerateStubFields:
 
     def test_bounded_string_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="name", type_str="string<=128")],
         )
         stub = generate_stub_module(defn)
@@ -226,7 +253,9 @@ class TestGenerateStubFields:
 
     def test_nested_type_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="header", type_str="std_msgs/msg/Header")],
         )
         stub = generate_stub_module(defn)
@@ -237,12 +266,16 @@ class TestGenerateStubFields:
 # generate_stub_module — constant handling
 # ======================================================================
 
+
 class TestGenerateStubConstants:
     def test_constant_with_classvar(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
-            constants=[MsgField(name="FOO", type_str="int32",
-                                default="42", is_constant=True)],
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
+            constants=[
+                MsgField(name="FOO", type_str="int32", default="42", is_constant=True)
+            ],
         )
         stub = generate_stub_module(defn)
         assert "ClassVar[int]" in stub
@@ -251,12 +284,12 @@ class TestGenerateStubConstants:
 
     def test_multiple_constants(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             constants=[
-                MsgField(name="A", type_str="int32",
-                         default="1", is_constant=True),
-                MsgField(name="B", type_str="float64",
-                         default="2.0", is_constant=True),
+                MsgField(name="A", type_str="int32", default="1", is_constant=True),
+                MsgField(name="B", type_str="float64", default="2.0", is_constant=True),
             ],
         )
         stub = generate_stub_module(defn)
@@ -266,9 +299,12 @@ class TestGenerateStubConstants:
     def test_constant_with_external_import(self):
         """A constant with a type needing external import (time/duration)."""
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
-            constants=[MsgField(name="NOW", type_str="time",
-                                default="0", is_constant=True)],
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
+            constants=[
+                MsgField(name="NOW", type_str="time", default="0", is_constant=True)
+            ],
         )
         stub = generate_stub_module(defn)
         assert "ClassVar" in stub
@@ -279,10 +315,13 @@ class TestGenerateStubConstants:
 # generate_stub_module — syntax validation
 # ======================================================================
 
+
 class TestGenerateStubSyntax:
     def test_simple_stub_compiles(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32")],
         )
         stub = generate_stub_module(defn)
@@ -293,7 +332,9 @@ class TestGenerateStubSyntax:
 
     def test_complex_stub_parses(self):
         defn = MsgDefinition(
-            package="test", type_name="Complex", type_kind="msg",
+            package="test",
+            type_name="Complex",
+            type_kind="msg",
             fields=[
                 MsgField(name="x", type_str="int32"),
                 MsgField(name="y", type_str="float64"),
@@ -307,10 +348,13 @@ class TestGenerateStubSyntax:
 
     def test_stub_with_constants_parses(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32")],
-            constants=[MsgField(name="FOO", type_str="int32",
-                                default="42", is_constant=True)],
+            constants=[
+                MsgField(name="FOO", type_str="int32", default="42", is_constant=True)
+            ],
         )
         stub = generate_stub_module(defn)
         tree = ast.parse(stub)
@@ -318,7 +362,9 @@ class TestGenerateStubSyntax:
 
     def test_empty_msg_stub_parses(self):
         defn = MsgDefinition(
-            package="test", type_name="Empty", type_kind="msg",
+            package="test",
+            type_name="Empty",
+            type_kind="msg",
             fields=[],
         )
         stub = generate_stub_module(defn)
@@ -330,10 +376,13 @@ class TestGenerateStubSyntax:
 # generate_stub_module — edge cases
 # ======================================================================
 
+
 class TestGenerateStubEdgeCases:
     def test_no_sequence_import_when_no_sequence(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32")],
         )
         stub = generate_stub_module(defn)
@@ -341,7 +390,9 @@ class TestGenerateStubEdgeCases:
 
     def test_sequence_imported_only_once(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[
                 MsgField(name="a", type_str="sequence<uint8>"),
                 MsgField(name="b", type_str="sequence<float64>"),
@@ -352,7 +403,9 @@ class TestGenerateStubEdgeCases:
 
     def test_external_import_in_stub(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="header", type_str="std_msgs/msg/Header")],
         )
         stub = generate_stub_module(defn)
@@ -361,7 +414,9 @@ class TestGenerateStubEdgeCases:
 
     def test_docstring_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32")],
         )
         stub = generate_stub_module(defn)
@@ -372,12 +427,14 @@ class TestGenerateStubEdgeCases:
 # _make_stub_field helper
 # ======================================================================
 
+
 class TestMakeStubField:
     """Direct tests for the ``_make_stub_field`` helper."""
 
     def test_primitive_field(self):
-        from zros2.generator._codegen._pyi import _make_stub_field
-        from zros2.generator._parser import MsgField, MsgDefinition
+        from zros2.generator.codegen.stubs import _make_stub_field
+        from zros2.generator.parsing.models import MsgDefinition, MsgField
+
         field = MsgField(name="x", type_str="int32")
         defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
         native, line, needs_seq = _make_stub_field(field, defn, "")
@@ -386,28 +443,31 @@ class TestMakeStubField:
         assert not needs_seq
 
     def test_sequence_field(self):
-        from zros2.generator._codegen._pyi import _make_stub_field
-        from zros2.generator._parser import MsgField, MsgDefinition
+        from zros2.generator.codegen.stubs import _make_stub_field
+        from zros2.generator.parsing.models import MsgDefinition, MsgField
+
         field = MsgField(name="data", type_str="sequence<uint8>")
         defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
-        native, line, needs_seq = _make_stub_field(field, defn, "")
+        native, _line, needs_seq = _make_stub_field(field, defn, "")
         assert "Sequence" in native
         assert needs_seq
 
     def test_field_with_default(self):
-        from zros2.generator._codegen._pyi import _make_stub_field
-        from zros2.generator._parser import MsgField, MsgDefinition
+        from zros2.generator.codegen.stubs import _make_stub_field
+        from zros2.generator.parsing.models import MsgDefinition, MsgField
+
         field = MsgField(name="x", type_str="int32", default="42")
         defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
         _, line, _ = _make_stub_field(field, defn, "")
         assert "= 42" in line
 
     def test_nested_field_has_no_default_suffix(self):
-        from zros2.generator._codegen._pyi import _make_stub_field
-        from zros2.generator._parser import MsgField, MsgDefinition
+        from zros2.generator.codegen.stubs import _make_stub_field
+        from zros2.generator.parsing.models import MsgDefinition, MsgField
+
         field = MsgField(name="header", type_str="std_msgs/msg/Header")
         defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
-        native, line, needs_seq = _make_stub_field(field, defn, "")
+        _native, line, needs_seq = _make_stub_field(field, defn, "")
         assert "Header" in line
         assert "=" not in line  # no default for nested types
         assert not needs_seq

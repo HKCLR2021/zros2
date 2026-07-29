@@ -7,24 +7,12 @@ to :meth:`ZRosClient.create_srv_client` and
 """
 
 import dataclasses
-import typing
 
-from ._base import (
-    _ReqT,
-    _ResT,
-    _SGReqT,
-    _ResGoalT,
-    _GetReqT,
-    _GetResT,
-    _FBMsgT,
-    _GoalT,
-    _ResultT,
-    _FeedbackT,
-)
+from ._base import RosMessage
 
 
 @dataclasses.dataclass(frozen=True)
-class ServiceTypes(typing.Generic[_ReqT, _ResT]):
+class ServiceTypes[ReqT: RosMessage, ResT: RosMessage]:
     """Stores ROS Service request/response message types.
 
     Attributes:
@@ -32,12 +20,21 @@ class ServiceTypes(typing.Generic[_ReqT, _ResT]):
         response: The response message class.
     """
 
-    Request: typing.Type[_ReqT]
-    Response: typing.Type[_ResT]
+    Request: type[ReqT]
+    Response: type[ResT]
 
 
 @dataclasses.dataclass(frozen=True)
-class ActionTypes(typing.Generic[_SGReqT, _ResGoalT, _GetReqT, _GetResT, _FBMsgT, _GoalT, _ResultT, _FeedbackT]):
+class ActionTypes[
+    SGReqT: RosMessage,
+    SGResT: RosMessage,
+    GRReqT: RosMessage,
+    GRResT: RosMessage,
+    FBMsgT: RosMessage,
+    GoalT: RosMessage,
+    ResultT: RosMessage,
+    FeedbackT: RosMessage,
+]:
     """Stores ROS Action message types.
 
     Attributes:
@@ -51,17 +48,17 @@ class ActionTypes(typing.Generic[_SGReqT, _ResGoalT, _GetReqT, _GetResT, _FBMsgT
         get_result_response: Message class for get_result responses.
     """
 
-    Goal: typing.Type[_GoalT]
-    Result: typing.Type[_ResultT]
-    Feedback: typing.Type[_FeedbackT]
-    FeedbackMessage: typing.Type[_FBMsgT]
-    SendGoal_Request: typing.Type[_SGReqT]
-    SendGoal_Response: typing.Type[_ResGoalT]
-    GetResult_Request: typing.Type[_GetReqT]
-    GetResult_Response: typing.Type[_GetResT]
+    Goal: type[GoalT]
+    Result: type[ResultT]
+    Feedback: type[FeedbackT]
+    FeedbackMessage: type[FBMsgT]
+    SendGoal_Request: type[SGReqT]
+    SendGoal_Response: type[SGResT]
+    GetResult_Request: type[GRReqT]
+    GetResult_Response: type[GRResT]
 
 
 __all__ = [
-    "ServiceTypes",
     "ActionTypes",
+    "ServiceTypes",
 ]

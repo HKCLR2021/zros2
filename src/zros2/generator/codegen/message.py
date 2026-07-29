@@ -4,21 +4,26 @@ Produces Python source for a single .py module defining a dataclass-like class
 backed by pycdr2.IdlStruct for CDR serialization.
 """
 
+# pyright: ignore[reportUnusedFunction]
 
 import ast
 import pathlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .._parser import MsgDefinition, MsgField
-from .._type_grammar import parse_type
-from .._type_map import _inner_type_str, resolve_type
-from .._utilities import _default_expr, _generated_metadata_stmts, _header_comment
-
 from lark import LarkError
 
+from ..parsing.models import MsgDefinition, MsgField
+from ..parsing.types import parse_type
+from ..semantics.resolve_types import inner_type_str, resolve_type
+from ..semantics.utilities import (
+    default_expr,
+    generated_metadata_stmts,
+    header_comment,
+)
 
 # ── Data type ────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class GeneratedFile:
@@ -34,7 +39,7 @@ class GeneratedFile:
 # When ``root_package`` is provided (e.g. in a multi-package workspace),
 # the registry lives under that package namespace, so the import becomes
 # ``from <root_package>._registry import ...`` rather than a bare relative import.
-def _registry_import(root_package: str) -> str:
+def registry_import(root_package: str) -> str:
     """Return the correct ``from ... _registry import ...`` prefix."""
     if root_package:
         return root_package + "._registry"
@@ -44,24 +49,46 @@ def _registry_import(root_package: str) -> str:
 # pycdr2 scalar types (plus bool/str) that ROS 2 always treats as required.
 # Unlike nested message types they can never be None in CDR, so wrapping
 # them in Optional would change the wire format (extra presence flag).
-_PYCDR2_PRIMITIVES: frozenset[str] = frozenset({
-    "bool", "int8", "int16", "int32", "int64",
-    "uint8", "uint16", "uint32", "uint64",
-    "float32", "float64",
-    "str", "byte", "char",
-})
+_PYCDR2_PRIMITIVES: frozenset[str] = frozenset(
+    {
+        "bool",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float32",
+        "float64",
+        "str",
+        "byte",
+        "char",
+    }
+)
 
 
-def _needs_optional_annotation(default_str: str, ann_expr: str) -> bool:
-    """Whether the ``__init__`` signature needs ``Optional`` for type checkers.
+def _needs_optional_annotation(default: str, type_str: str) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Check whether a field with a ``None`` default needs ``Optional``.
 
-    Nested types defaulting to ``None`` need ``Optional`` so static type
-    checkers accept the ``None`` default.  The wrapper is applied **only**
-    in the ``__init__`` signature — the class-level annotation stays bare
-    because pycdr2 reads it at runtime for CDR encoding and ``Optional``
-    would inject an unwanted presence flag on the wire.
+    Primitives (int32, float64, str, …) don't need ``Optional`` because pycdr2
+    treats ``None`` as a zero-value.  Nested message types and containers
+    *do* need ``Optional`` so the codegen produces ``None | …``.
+
+    Note: this is a string-heuristic check, intentionally kept simple so it
+    can handle type strings (``sequence[float64]``) that are not valid in the
+    CDR type parser (which uses ``sequence<float64>`` syntax).
     """
-    return default_str == "None" and ann_expr not in _PYCDR2_PRIMITIVES
+    if default != "None":
+        return False
+    # Strip array/sequence/array suffixes to get the base type.
+    base = type_str.split("[")[0].split("<")[0].strip()
+    # Typedef-style bounded string (e.g. ``string<=10``).
+    if base == "string" and "<=" in type_str:
+        return False
+    # Primitives that pycdr2 always treats as required.
+    return base not in _PYCDR2_PRIMITIVES
 
 
 def _is_container_type(type_str: str) -> bool:
@@ -71,8 +98,11 @@ def _is_container_type(type_str: str) -> bool:
     except LarkError:
         return False
     return info.kind in (
-        "unbounded_sequence", "bounded_sequence",
-        "unbounded", "fixed", "bounded",
+        "unbounded_sequence",
+        "bounded_sequence",
+        "unbounded",
+        "fixed",
+        "bounded",
     )
 
 
@@ -88,7 +118,9 @@ def _is_container_type(type_str: str) -> bool:
 
 
 def _gen_to_dict_value(
-    field: MsgField, defn: MsgDefinition, root_package: str,
+    field: MsgField,
+    defn: MsgDefinition,
+    root_package: str,
 ) -> ast.expr:
     """Generate AST expression for a single field in a ``to_dict`` return dict.
 
@@ -102,19 +134,24 @@ def _gen_to_dict_value(
     """
     info = parse_type(field.type_str)
     resolved = resolve_type(
-        field.type_str, current_package=defn.package,
+        field.type_str,
+        current_package=defn.package,
         root_package=root_package,
     )
     self_attr = ast.Attribute(value=ast.Name(id="self"), attr=field.name)
 
     # ── Container types (array / sequence) ────────────────────────────────
     if info.kind in (
-        "unbounded_sequence", "bounded_sequence",
-        "unbounded", "fixed", "bounded",
+        "unbounded_sequence",
+        "bounded_sequence",
+        "unbounded",
+        "fixed",
+        "bounded",
     ):
-        inner_str = _inner_type_str(info)
+        inner_str = inner_type_str(info)
         inner_resolved = resolve_type(
-            inner_str, current_package=defn.package,
+            inner_str,
+            current_package=defn.package,
             root_package=root_package,
         )
         if inner_resolved.external_import:
@@ -129,14 +166,20 @@ def _gen_to_dict_value(
             return ast.ListComp(
                 elt=ast.Call(
                     func=ast.Attribute(
-                        value=ast.Name(id="e"), attr="to_dict",
+                        value=ast.Name(id="e"),
+                        attr="to_dict",
                     ),
-                    args=[], keywords=[],
+                    args=[],
+                    keywords=[],
                 ),
-                generators=[ast.comprehension(
-                    target=ast.Name(id="e"), iter=cast_wrapper,
-                    ifs=[], is_async=0,
-                )],
+                generators=[
+                    ast.comprehension(
+                        target=ast.Name(id="e"),
+                        iter=cast_wrapper,
+                        ifs=[],
+                        is_async=0,
+                    )
+                ],
             )
         # Primitive array: cast(list, self.field)
         # ``cast()`` avoids a type-checker error: pycdr2's ``array[T,N]`` /
@@ -151,16 +194,17 @@ def _gen_to_dict_value(
     if resolved.external_import:
         return ast.Call(
             func=ast.Attribute(value=self_attr, attr="to_dict"),
-            args=[], keywords=[],
+            args=[],
+            keywords=[],
         )
 
     # ── Primitive scalar ────────────────────────────────────────────────
     return self_attr
 
 
-
 def _gen_to_dict_method(
-    defn: MsgDefinition, root_package: str,
+    defn: MsgDefinition,
+    root_package: str,
 ) -> ast.FunctionDef:
     """Generate a hardcoded ``def to_dict(self) -> dict[str, object]:``.
 
@@ -173,23 +217,30 @@ def _gen_to_dict_method(
     return ast.FunctionDef(
         name="to_dict",
         args=ast.arguments(
-            posonlyargs=[], args=[ast.arg(arg="self")],
-            kwonlyargs=[], kw_defaults=[], defaults=[],
+            posonlyargs=[],
+            args=[ast.arg(arg="self")],
+            kwonlyargs=[],
+            kw_defaults=[],
+            defaults=[],
         ),
         body=[ast.Return(value=ast.Dict(keys=keys, values=values))],
         decorator_list=[],
         returns=ast.Subscript(
             value=ast.Name(id="dict"),
-            slice=ast.Tuple(elts=[
-                ast.Name(id="str"), ast.Name(id="Any"),
-            ]),
+            slice=ast.Tuple(
+                elts=[
+                    ast.Name(id="str"),
+                    ast.Name(id="Any"),
+                ]
+            ),
         ),
     )
 
 
-
 def _gen_from_dict_value(
-    field: MsgField, defn: MsgDefinition, root_package: str,
+    field: MsgField,
+    defn: MsgDefinition,
+    root_package: str,
 ) -> ast.expr:
     """Generate AST expression for a single field in a ``from_dict`` constructor call.
 
@@ -202,7 +253,8 @@ def _gen_from_dict_value(
     """
     info = parse_type(field.type_str)
     resolved = resolve_type(
-        field.type_str, current_package=defn.package,
+        field.type_str,
+        current_package=defn.package,
         root_package=root_package,
     )
     data_sub = ast.Subscript(
@@ -212,12 +264,16 @@ def _gen_from_dict_value(
 
     # ── Container types (array / sequence) ────────────────────────────────
     if info.kind in (
-        "unbounded_sequence", "bounded_sequence",
-        "unbounded", "fixed", "bounded",
+        "unbounded_sequence",
+        "bounded_sequence",
+        "unbounded",
+        "fixed",
+        "bounded",
     ):
-        inner_str = _inner_type_str(info)
+        inner_str = inner_type_str(info)
         inner_resolved = resolve_type(
-            inner_str, current_package=defn.package,
+            inner_str,
+            current_package=defn.package,
             root_package=root_package,
         )
         if inner_resolved.external_import:
@@ -226,14 +282,20 @@ def _gen_from_dict_value(
             return ast.ListComp(
                 elt=ast.Call(
                     func=ast.Attribute(
-                        value=ast.Name(id=inner_name), attr="from_dict",
+                        value=ast.Name(id=inner_name),
+                        attr="from_dict",
                     ),
-                    args=[ast.Name(id="item")], keywords=[],
+                    args=[ast.Name(id="item")],
+                    keywords=[],
                 ),
-                generators=[ast.comprehension(
-                    target=ast.Name(id="item"), iter=data_sub,
-                    ifs=[], is_async=0,
-                )],
+                generators=[
+                    ast.comprehension(
+                        target=ast.Name(id="item"),
+                        iter=data_sub,
+                        ifs=[],
+                        is_async=0,
+                    )
+                ],
             )
         # Primitive array: data["field"]
         return data_sub
@@ -245,16 +307,17 @@ def _gen_from_dict_value(
                 value=ast.Name(id=resolved.annotation_expr),
                 attr="from_dict",
             ),
-            args=[data_sub], keywords=[],
+            args=[data_sub],
+            keywords=[],
         )
 
     # ── Primitive scalar ────────────────────────────────────────────────
     return data_sub
 
 
-
 def _gen_from_dict_method(
-    defn: MsgDefinition, root_package: str,
+    defn: MsgDefinition,
+    root_package: str,
 ) -> ast.FunctionDef:
     """Generate a hardcoded ``def from_dict(cls, data) -> ClassName:``.
 
@@ -277,19 +340,32 @@ def _gen_from_dict_method(
             posonlyargs=[],
             args=[
                 ast.arg(arg="cls"),
-                ast.arg(arg="data", annotation=ast.Subscript(
-                    value=ast.Name(id="dict"),
-                    slice=ast.Tuple(elts=[
-                        ast.Name(id="str"), ast.Name(id="Any"),
-                    ]),
-                )),
+                ast.arg(
+                    arg="data",
+                    annotation=ast.Subscript(
+                        value=ast.Name(id="dict"),
+                        slice=ast.Tuple(
+                            elts=[
+                                ast.Name(id="str"),
+                                ast.Name(id="Any"),
+                            ]
+                        ),
+                    ),
+                ),
             ],
-            kwonlyargs=[], kw_defaults=[], defaults=[],
+            kwonlyargs=[],
+            kw_defaults=[],
+            defaults=[],
         ),
-        body=[ast.Return(value=ast.Call(
-            func=ast.Name(id=class_name),
-            args=[], keywords=keywords,
-        ))],
+        body=[
+            ast.Return(
+                value=ast.Call(
+                    func=ast.Name(id=class_name),
+                    args=[],
+                    keywords=keywords,
+                )
+            )
+        ],
         decorator_list=[ast.Name(id="classmethod")],
         # Use string forward reference — the class name is not yet defined
         # when the class body executes.
@@ -349,15 +425,17 @@ def generate_message_module(
         if const.type_str == "bool" and default is not None:
             default = "True" if default.lower() in ("true", "1") else "False"
 
-        body.append(ast.AnnAssign(
-            target=ast.Name(id=const.name),
-            annotation=ast.Subscript(
-                value=ast.Name(id="ClassVar"),
-                slice=ast.parse(resolved.annotation_expr, mode="eval").body,
-            ),
-            value=ast.parse(default, mode="eval").body if default else None,
-            simple=1,
-        ))
+        body.append(
+            ast.AnnAssign(
+                target=ast.Name(id=const.name),
+                annotation=ast.Subscript(
+                    value=ast.Name(id="ClassVar"),
+                    slice=ast.parse(resolved.annotation_expr, mode="eval").body,
+                ),
+                value=ast.parse(default, mode="eval").body if default else None,
+                simple=1,
+            )
+        )
 
     # ── Phase 2 — Field annotations ────────────────────────────────────
     #
@@ -390,9 +468,8 @@ def generate_message_module(
             ext_imports.append(resolved.external_import)
 
         ann_expr = resolved.annotation_expr
-        orig_default = _default_expr(field.type_str)
-        needs_optional = (orig_default == "None"
-                          and ann_expr not in _PYCDR2_PRIMITIVES)
+        orig_default = default_expr(field.type_str)
+        needs_optional = orig_default == "None" and ann_expr not in _PYCDR2_PRIMITIVES
 
         # ── Phase 2 — Default values for nested types ──────────────────
         #
@@ -425,48 +502,59 @@ def generate_message_module(
         # values, and the factory gives a fresh instance each call.
         if default_str and default_str.endswith("()") and len(default_str) > 2:
             factory_cls = default_str[:-2]
-            body.append(ast.AnnAssign(
-                target=ast.Name(id=field.name),
-                annotation=ast.parse(class_ann_expr, mode="eval").body,
-                value=ast.Call(
-                    func=ast.Name(id="field"),
-                    args=[],
-                    keywords=[
-                        ast.keyword(arg="default_factory",
-                                    value=ast.Name(id=factory_cls)),
-                    ],
-                ),
-                simple=1,
-            ))
-        else:
-            # For pycdr2 sequence/array types, wrap the tuple default in
-            # ``cast()`` so pyright accepts it at the class level.
-            if default_str and default_str != "None" and (
-                class_ann_expr.startswith("sequence[")
-                or class_ann_expr.startswith("array[")
-            ):
-                needs_cast = True
-                body.append(ast.AnnAssign(
+            body.append(
+                ast.AnnAssign(
                     target=ast.Name(id=field.name),
                     annotation=ast.parse(class_ann_expr, mode="eval").body,
                     value=ast.Call(
-                        func=ast.Name(id="cast"),
-                        args=[
-                            ast.parse(class_ann_expr, mode="eval").body,
-                            ast.parse(default_str, mode="eval").body,
+                        func=ast.Name(id="field"),
+                        args=[],
+                        keywords=[
+                            ast.keyword(
+                                arg="default_factory", value=ast.Name(id=factory_cls)
+                            ),
                         ],
-                        keywords=[],
                     ),
                     simple=1,
-                ))
+                )
+            )
+        else:
+            # For pycdr2 sequence/array types, wrap the tuple default in
+            # ``cast()`` so pyright accepts it at the class level.
+            if (
+                default_str
+                and default_str != "None"
+                and (class_ann_expr.startswith(("sequence[", "array[")))
+            ):
+                needs_cast = True
+                body.append(
+                    ast.AnnAssign(
+                        target=ast.Name(id=field.name),
+                        annotation=ast.parse(class_ann_expr, mode="eval").body,
+                        value=ast.Call(
+                            func=ast.Name(id="cast"),
+                            args=[
+                                ast.parse(class_ann_expr, mode="eval").body,
+                                ast.parse(default_str, mode="eval").body,
+                            ],
+                            keywords=[],
+                        ),
+                        simple=1,
+                    )
+                )
             else:
-                body.append(ast.AnnAssign(
-                    target=ast.Name(id=field.name),
-                    annotation=ast.parse(class_ann_expr, mode="eval").body,
-                    value=(ast.parse(default_str, mode="eval").body
-                           if default_str else None),
-                    simple=1,
-                ))
+                body.append(
+                    ast.AnnAssign(
+                        target=ast.Name(id=field.name),
+                        annotation=ast.parse(class_ann_expr, mode="eval").body,
+                        value=(
+                            ast.parse(default_str, mode="eval").body
+                            if default_str
+                            else None
+                        ),
+                        simple=1,
+                    )
+                )
 
         # Record field name + type for the ``__annotations__`` override
         # below (Phase 4).  These entries are what pycdr2 reads to determine
@@ -483,12 +571,14 @@ def generate_message_module(
     # Every generated message class carries its fully-qualified ROS 2 name
     # (e.g. "std_msgs/msg/String") so that runtime code can introspect the
     # ROS type without external lookup.
-    body.append(ast.AnnAssign(
-        target=ast.Name(id="__ros_name__"),
-        annotation=ast.Name(id="str"),
-        value=ast.Constant(value=defn.full_name),
-        simple=1,
-    ))
+    body.append(
+        ast.AnnAssign(
+            target=ast.Name(id="__ros_name__"),
+            annotation=ast.Name(id="str"),
+            value=ast.Constant(value=defn.full_name),
+            simple=1,
+        )
+    )
 
     # ── Phase 4 — ``__annotations__`` override ──────────────────────────
     #
@@ -500,10 +590,12 @@ def generate_message_module(
     # re-assign it here with an explicit ``Dict[str, type]`` containing
     # only the CDR-carrying fields.  Constants are excluded — pycdr2 would
     # crash trying to resolve ``ClassVar`` as a CDR type.
-    body.append(ast.Assign(
-        targets=[ast.Name(id="__annotations__")],
-        value=ast.Dict(keys=ann_keys, values=ann_values),
-    ))
+    body.append(
+        ast.Assign(
+            targets=[ast.Name(id="__annotations__")],
+            value=ast.Dict(keys=ann_keys, values=ann_values),
+        )
+    )
 
     # ── Phase 5 — Built-in methods ─────────────────────────────────────
     #
@@ -514,32 +606,38 @@ def generate_message_module(
     body.append(_gen_to_dict_method(defn, root_package))
     body.append(_gen_from_dict_method(defn, root_package))
 
-    body.append(ast.FunctionDef(
-        name="from_attributes",
-        args=ast.arguments(
-            posonlyargs=[],
-            args=[
-                ast.arg(arg="cls", annotation=ast.Subscript(
-                        value=ast.Name(id="type"),
-                        slice=ast.Constant(value=class_name),
-                    )),
-                ast.arg(arg="obj",
-                        annotation=ast.Name(id="Any")),
+    body.append(
+        ast.FunctionDef(
+            name="from_attributes",
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[
+                    ast.arg(
+                        arg="cls",
+                        annotation=ast.Subscript(
+                            value=ast.Name(id="type"),
+                            slice=ast.Constant(value=class_name),
+                        ),
+                    ),
+                    ast.arg(arg="obj", annotation=ast.Name(id="Any")),
+                ],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
+            ),
+            body=[
+                ast.Return(
+                    value=ast.Call(
+                        func=ast.Name(id="_from_attributes"),
+                        args=[ast.Name(id="cls"), ast.Name(id="obj")],
+                        keywords=[],
+                    )
+                ),
             ],
-            kwonlyargs=[],
-            kw_defaults=[],
-            defaults=[],
-        ),
-        body=[
-            ast.Return(value=ast.Call(
-                func=ast.Name(id="_from_attributes"),
-                args=[ast.Name(id="cls"), ast.Name(id="obj")],
-                keywords=[],
-            )),
-        ],
-        decorator_list=[ast.Name(id="classmethod")],
-        returns=None,
-    ))
+            decorator_list=[ast.Name(id="classmethod")],
+            returns=None,
+        )
+    )
 
     # ── Phase 6 — Hand-written ``__init__`` ────────────────────────────
     #
@@ -575,7 +673,7 @@ def generate_message_module(
         )
 
         ann_expr = resolved.annotation_expr
-        orig_default = _default_expr(field.type_str)
+        orig_default = default_expr(field.type_str)
 
         # Translate pycdr2 types to Python-native equivalents for the
         # ``__init__`` signature so that static type checkers (pyright,
@@ -583,15 +681,15 @@ def generate_message_module(
         init_ann_expr = ann_expr
         if init_ann_expr.startswith("sequence["):
             # sequence[GoalStatus, 10] → Sequence[GoalStatus]
-            inner = init_ann_expr[len("sequence["):-1]
+            inner = init_ann_expr[len("sequence[") : -1]
             # Strip bounded length: "GoalStatus, 10" → "GoalStatus"
             if "," in inner and "[" not in inner.rsplit(",", 1)[1]:
                 inner = inner.rsplit(",", 1)[0].strip()
             init_ann_expr = f"Sequence[{inner}]"
-            ext_imports.append("from typing import Sequence")
+            ext_imports.append("from collections.abc import Sequence")
         elif init_ann_expr.startswith("array["):
             # array[float64, 3] → tuple[float64, ...]
-            inner = init_ann_expr[len("array["):-1]
+            inner = init_ann_expr[len("array[") : -1]
             if "," in inner:
                 inner = inner.rsplit(",", 1)[0].strip()
             init_ann_expr = f"tuple[{inner}, ...]"
@@ -610,41 +708,47 @@ def generate_message_module(
             needs_optional_import = True
             init_ann_expr = f"Optional[{init_ann_expr}]"
 
-        kwonlyargs.append(ast.arg(
-            arg=field.name,
-            annotation=ast.parse(init_ann_expr, mode="eval").body,
-        ))
+        kwonlyargs.append(
+            ast.arg(
+                arg=field.name,
+                annotation=ast.parse(init_ann_expr, mode="eval").body,
+            )
+        )
         kw_defaults.append(
-            ast.parse(default_str, mode="eval").body if default_str
-            else ast.Constant(value=None))
+            ast.parse(default_str, mode="eval").body
+            if default_str
+            else ast.Constant(value=None)
+        )
 
         # Wrap the body assignment in ``cast(original_type, param)`` when
         # the ``__init__`` annotation was translated to a Python-native type,
         # so pyright does not flag the assignment as a type mismatch.
         if init_ann_expr != ann_expr:
             needs_cast = True
-            init_body.append(ast.Assign(
-                targets=[
-                    ast.Attribute(
-                        value=ast.Name(id="self"), attr=field.name),
-                ],
-                value=ast.Call(
-                    func=ast.Name(id="cast"),
-                    args=[
-                        ast.parse(ann_expr, mode="eval").body,
-                        ast.Name(id=field.name),
+            init_body.append(
+                ast.Assign(
+                    targets=[
+                        ast.Attribute(value=ast.Name(id="self"), attr=field.name),
                     ],
-                    keywords=[],
-                ),
-            ))
+                    value=ast.Call(
+                        func=ast.Name(id="cast"),
+                        args=[
+                            ast.parse(ann_expr, mode="eval").body,
+                            ast.Name(id=field.name),
+                        ],
+                        keywords=[],
+                    ),
+                )
+            )
         else:
-            init_body.append(ast.Assign(
-                targets=[
-                    ast.Attribute(
-                        value=ast.Name(id="self"), attr=field.name),
-                ],
-                value=ast.Name(id=field.name),
-            ))
+            init_body.append(
+                ast.Assign(
+                    targets=[
+                        ast.Attribute(value=ast.Name(id="self"), attr=field.name),
+                    ],
+                    value=ast.Name(id=field.name),
+                )
+            )
     func_def = ast.FunctionDef(
         name="__init__",
         args=ast.arguments(
@@ -689,40 +793,54 @@ def generate_message_module(
     # ── Build the full module AST ────────────────────────────────────────
     module_stmts: list[ast.stmt] = []
 
-    module_stmts.append(ast.Expr(value=ast.Constant(
-        value=f'Auto-generated ROS 2 {defn.type_kind}: {defn.full_name}.',
-    )))
+    module_stmts.append(
+        ast.Expr(
+            value=ast.Constant(
+                value=f"Auto-generated ROS 2 {defn.type_kind}: {defn.full_name}.",
+            )
+        )
+    )
 
     dc_names = [ast.alias(name="dataclass")]
-    if any(isinstance(stmt, ast.AnnAssign)
-           and isinstance(stmt.value, ast.Call)
-           and isinstance(stmt.value.func, ast.Name)
-           and stmt.value.func.id == "field"
-           for stmt in body):
+    if any(
+        isinstance(stmt, ast.AnnAssign)
+        and isinstance(stmt.value, ast.Call)
+        and isinstance(stmt.value.func, ast.Name)
+        and stmt.value.func.id == "field"
+        for stmt in body
+    ):
         dc_names.append(ast.alias(name="field"))
-    module_stmts.append(ast.ImportFrom(
-        module="dataclasses",
-        names=dc_names,
-        level=0,
-    ))
-    module_stmts.append(ast.ImportFrom(
-        module="pycdr2",
-        names=[ast.alias(name="IdlStruct")],
-        level=0,
-    ))
-    module_stmts.append(ast.ImportFrom(
-        module="zros2.types.utils",
-        names=[
-            ast.alias(name="from_attributes", asname="_from_attributes"),
-        ],
-        level=0,
-    ))
-    if pycdr2_imports:
-        module_stmts.append(ast.ImportFrom(
-            module="pycdr2.types",
-            names=[ast.alias(name=n) for n in sorted(pycdr2_imports)],
+    module_stmts.append(
+        ast.ImportFrom(
+            module="dataclasses",
+            names=dc_names,
             level=0,
-        ))
+        )
+    )
+    module_stmts.append(
+        ast.ImportFrom(
+            module="pycdr2",
+            names=[ast.alias(name="IdlStruct")],
+            level=0,
+        )
+    )
+    module_stmts.append(
+        ast.ImportFrom(
+            module="zros2.types.utils",
+            names=[
+                ast.alias(name="from_attributes", asname="_from_attributes"),
+            ],
+            level=0,
+        )
+    )
+    if pycdr2_imports:
+        module_stmts.append(
+            ast.ImportFrom(
+                module="pycdr2.types",
+                names=[ast.alias(name=n) for n in sorted(pycdr2_imports)],
+                level=0,
+            )
+        )
     seen: set[str] = set()
     for imp in sorted(set(ext_imports)):
         if imp and imp not in seen:
@@ -740,21 +858,26 @@ def generate_message_module(
         typing_names.append(ast.alias(name="cast"))
     typing_names.append(ast.alias(name="Any"))
     if typing_names:
-        module_stmts.append(ast.ImportFrom(
-            module="typing",
-            names=typing_names,
-            level=0,
-        ))
+        module_stmts.append(
+            ast.ImportFrom(
+                module="typing",
+                names=typing_names,
+                level=0,
+            )
+        )
 
     # ── Module-level metadata (after imports, before class) ────────────
     source = f"{defn.package}/{defn.type_kind}/{class_name}.{defn.type_kind}"
-    module_stmts.extend(_generated_metadata_stmts(source))
+    module_stmts.extend(generated_metadata_stmts(source))
 
     module_stmts.append(class_def)
 
-    full_module = ast.fix_missing_locations(ast.Module(
-        body=module_stmts, type_ignores=[],
-    ))
+    full_module = ast.fix_missing_locations(
+        ast.Module(
+            body=module_stmts,
+            type_ignores=[],
+        )
+    )
     content = ast.unparse(full_module)
 
     # ── Syntax validation ─────────────────────────────────────────────────
@@ -766,4 +889,4 @@ def generate_message_module(
             f"Generated code for {defn.full_name} has syntax errors: {exc}"
         ) from exc
 
-    return _header_comment(content, distro=distro) + content
+    return header_comment(content, distro=distro) + content

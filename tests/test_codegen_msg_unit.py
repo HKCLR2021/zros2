@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator._codegen._msg``.
+"""Component-level tests for ``zros2.generator.codegen.message``.
 
 Tests the core message module code generator in isolation:
 - ``GeneratedFile`` data type
@@ -8,23 +8,60 @@ Tests the core message module code generator in isolation:
 - Generated code can be compiled and produces valid dataclass-like classes
 """
 
-import ast
 import hashlib
+import importlib.util
 import pathlib
-from typing import Any
+import sys
+import tempfile
+from pathlib import Path
 
-from zros2.generator._codegen._msg import (
+from zros2.generator.codegen.message import (
     GeneratedFile,
-    _registry_import,
     _needs_optional_annotation,
     generate_message_module,
+    registry_import,
 )
-from zros2.generator._parser import MsgDefinition, MsgField
+from zros2.generator.parsing.models import MsgDefinition, MsgField
+
+# ═══════════════════════════════════════════════════════════════════════
+# Generated module loader — uses importlib instead of exec
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _load_generated(source: str, name: str, ns: dict | None = None) -> type:
+    """Write generated source to a temp file and import it via importlib.
+
+    The temp directory is cleaned up after loading; the module object
+    lives on in ``sys.modules``.
+    """
+    with tempfile.TemporaryDirectory(suffix="_zros2_test") as _tmp:
+        base = Path(_tmp)
+        sys.path.insert(0, str(base))
+        mod_name = f"_test_{name}"
+        mod_file = base / f"{mod_name}.py"
+        mod_file.write_text(source)
+
+        spec = importlib.util.spec_from_file_location(mod_name, str(mod_file))
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Failed to create module spec for {mod_name}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[mod_name] = module
+
+        if ns is not None:
+            module.__dict__.update(ns)
+
+        spec.loader.exec_module(module)
+
+        cls_ = getattr(module, name)
+        if ns is not None:
+            ns[name] = cls_
+        return cls_
 
 
 # ======================================================================
 # GeneratedFile
 # ======================================================================
+
 
 class TestGeneratedFile:
     def test_fields(self):
@@ -40,23 +77,25 @@ class TestGeneratedFile:
 
 
 # ======================================================================
-# _registry_import
+# registry_import
 # ======================================================================
+
 
 class TestRegistryImport:
     def test_no_root_package(self):
-        assert _registry_import("") == "_registry"
+        assert registry_import("") == "_registry"
 
     def test_with_root_package(self):
-        assert _registry_import("zros2_msgs") == "zros2_msgs._registry"
+        assert registry_import("zros2_msgs") == "zros2_msgs._registry"
 
     def test_with_nested_root_package(self):
-        assert _registry_import("my.workspace.msgs") == "my.workspace.msgs._registry"
+        assert registry_import("my.workspace.msgs") == "my.workspace.msgs._registry"
 
 
 # ======================================================================
 # _needs_optional_annotation
 # ======================================================================
+
 
 class TestNeedsOptionalAnnotation:
     def test_nested_type_with_none_default_needs_optional(self):
@@ -83,12 +122,15 @@ class TestNeedsOptionalAnnotation:
 # generate_message_module — structure checks
 # ======================================================================
 
+
 class TestGenerateMessageStructure:
     """Check that the generated source has the expected structural elements."""
 
     def test_class_name_in_output(self):
         defn = MsgDefinition(
-            package="test", type_name="Point", type_kind="msg",
+            package="test",
+            type_name="Point",
+            type_kind="msg",
             fields=[
                 MsgField(name="x", type_str="float64"),
                 MsgField(name="y", type_str="float64"),
@@ -99,7 +141,9 @@ class TestGenerateMessageStructure:
 
     def test_decorator_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
@@ -107,7 +151,9 @@ class TestGenerateMessageStructure:
 
     def test_hand_written_init(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
@@ -116,7 +162,9 @@ class TestGenerateMessageStructure:
 
     def test_imports_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
@@ -126,7 +174,9 @@ class TestGenerateMessageStructure:
 
     def test_utility_methods_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
@@ -137,7 +187,9 @@ class TestGenerateMessageStructure:
 
     def test_annotations_override(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
@@ -148,7 +200,9 @@ class TestGenerateMessageStructure:
         ``__annotations__`` so that ``@dataclass(init=False)`` can
         find their type annotation at class-build time."""
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="stamp", type_str="time")],
         )
         code = generate_message_module(defn)
@@ -159,7 +213,9 @@ class TestGenerateMessageStructure:
 
     def test_header_comment(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[],
         )
         code = generate_message_module(defn)
@@ -167,21 +223,27 @@ class TestGenerateMessageStructure:
         assert "Generated at:" in code
 
     def test_header_sha1(self):
-            """SHA1 hash in header matches the body content."""
-            defn = MsgDefinition(
-                package="test", type_name="Foo", type_kind="msg",
-                fields=[MsgField(name="val", type_str="int32")],
-            )
-            code = generate_message_module(defn)
-            sha_line = [line for line in code.splitlines() if line.startswith("# SHA1:")][0]
-            sha_value = sha_line.split(": ", 1)[1]
-            body = code.split("\n\n", 1)[1]
-            expected = hashlib.sha1(body.encode("utf-8")).hexdigest()
-            assert sha_value == expected
+        """SHA1 hash in header matches the body content."""
+        defn = MsgDefinition(
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
+            fields=[MsgField(name="val", type_str="int32")],
+        )
+        code = generate_message_module(defn)
+        sha_line = next(
+            line for line in code.splitlines() if line.startswith("# SHA1:")
+        )
+        sha_value = sha_line.split(": ", 1)[1]
+        body = code.split("\n\n", 1)[1]
+        expected = hashlib.sha1(body.encode("utf-8")).hexdigest()
+        assert sha_value == expected
 
     def test_generated_metadata_present(self):
         defn = MsgDefinition(
-            package="test", type_name="Point", type_kind="msg",
+            package="test",
+            type_name="Point",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="float64")],
         )
         code = generate_message_module(defn)
@@ -195,37 +257,49 @@ class TestGenerateMessageStructure:
         must NOT appear in the class-level ``__annotations__`` dict, which
         should only contain CDR field types."""
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
         # Find the __annotations__ override dict
         import ast as _ast
+
         tree = _ast.parse(code)
-        cls_def = next(n for n in _ast.walk(tree)
-                       if isinstance(n, _ast.ClassDef))
+        cls_def = next(n for n in _ast.walk(tree) if isinstance(n, _ast.ClassDef))
         ann_assign = next(
-            (n for n in cls_def.body
-             if isinstance(n, _ast.Assign)
-             and any(t.id == "__annotations__" for t in n.targets
-                     if isinstance(t, _ast.Name))),
+            (
+                n
+                for n in cls_def.body
+                if isinstance(n, _ast.Assign)
+                and any(
+                    t.id == "__annotations__"
+                    for t in n.targets
+                    if isinstance(t, _ast.Name)
+                )
+            ),
             None,
         )
         assert ann_assign is not None, "__annotations__ override not found"
         ann_str = _ast.unparse(ann_assign.value)
-        assert "__generated__" not in ann_str, \
+        assert "__generated__" not in ann_str, (
             "__generated__ leaked into __annotations__"
-        assert "__source__" not in ann_str, \
-            "__source__ leaked into __annotations__"
+        )
+        assert "__source__" not in ann_str, "__source__ leaked into __annotations__"
+
 
 # ======================================================================
 # generate_message_module — field and constant output
 # ======================================================================
 
+
 class TestGenerateMessageFields:
     def test_primitive_field_default(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="count", type_str="int32")],
         )
         code = generate_message_module(defn)
@@ -233,7 +307,9 @@ class TestGenerateMessageFields:
 
     def test_string_field_default(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="name", type_str="string")],
         )
         code = generate_message_module(defn)
@@ -241,7 +317,9 @@ class TestGenerateMessageFields:
 
     def test_bool_field_default(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="flag", type_str="bool")],
         )
         code = generate_message_module(defn)
@@ -249,7 +327,9 @@ class TestGenerateMessageFields:
 
     def test_nested_field_with_factory(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="header", type_str="std_msgs/msg/Header")],
         )
         code = generate_message_module(defn)
@@ -257,9 +337,12 @@ class TestGenerateMessageFields:
 
     def test_constant_with_classvar(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
-            constants=[MsgField(name="FOO", type_str="int32",
-                                default="42", is_constant=True)],
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
+            constants=[
+                MsgField(name="FOO", type_str="int32", default="42", is_constant=True)
+            ],
         )
         code = generate_message_module(defn)
         assert "ClassVar" in code
@@ -267,36 +350,50 @@ class TestGenerateMessageFields:
 
     def test_bool_constant(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
-            constants=[MsgField(name="ENABLED", type_str="bool",
-                                default="True", is_constant=True)],
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
+            constants=[
+                MsgField(
+                    name="ENABLED", type_str="bool", default="True", is_constant=True
+                )
+            ],
         )
         code = generate_message_module(defn)
         assert "ENABLED: ClassVar[bool] = True" in code
 
     def test_bool_constant_lowercase_true(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
-            constants=[MsgField(name="FLAG", type_str="bool",
-                                default="true", is_constant=True)],
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
+            constants=[
+                MsgField(name="FLAG", type_str="bool", default="true", is_constant=True)
+            ],
         )
         code = generate_message_module(defn)
         assert "True" in code  # normalised
 
     def test_bool_constant_1(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
-            constants=[MsgField(name="FLAG", type_str="bool",
-                                default="1", is_constant=True)],
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
+            constants=[
+                MsgField(name="FLAG", type_str="bool", default="1", is_constant=True)
+            ],
         )
         code = generate_message_module(defn)
         assert "True" in code
 
     def test_bool_constant_0(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
-            constants=[MsgField(name="FLAG", type_str="bool",
-                                default="0", is_constant=True)],
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
+            constants=[
+                MsgField(name="FLAG", type_str="bool", default="0", is_constant=True)
+            ],
         )
         code = generate_message_module(defn)
         assert "False" in code
@@ -304,9 +401,12 @@ class TestGenerateMessageFields:
     def test_constant_with_external_import(self):
         """A constant whose type requires an external import (time/duration)."""
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
-            constants=[MsgField(name="NOW", type_str="time",
-                                default="0", is_constant=True)],
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
+            constants=[
+                MsgField(name="NOW", type_str="time", default="0", is_constant=True)
+            ],
         )
         code = generate_message_module(defn)
         # The time type adds an external import for builtin_interfaces
@@ -315,7 +415,9 @@ class TestGenerateMessageFields:
 
     def test_float64_array_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="values", type_str="float64[3]")],
         )
         code = generate_message_module(defn)
@@ -323,7 +425,9 @@ class TestGenerateMessageFields:
 
     def test_sequence_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="data", type_str="sequence<uint8>")],
         )
         code = generate_message_module(defn)
@@ -331,7 +435,9 @@ class TestGenerateMessageFields:
 
     def test_bounded_string_field(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="name", type_str="string<=128")],
         )
         code = generate_message_module(defn)
@@ -340,7 +446,9 @@ class TestGenerateMessageFields:
     def test_field_default_is_type_based_not_field_based(self):
         """The codegen currently uses _default_expr(type) rather than field.default."""
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32", default="42")],
         )
         code = generate_message_module(defn)
@@ -352,10 +460,13 @@ class TestGenerateMessageFields:
 # generate_message_module — root_package handling
 # ======================================================================
 
+
 class TestGenerateMessageRootPackage:
     def test_root_package_in_nested_import(self):
         defn = MsgDefinition(
-            package="test", type_name="Bar", type_kind="msg",
+            package="test",
+            type_name="Bar",
+            type_kind="msg",
             fields=[MsgField(name="h", type_str="std_msgs/msg/Header")],
         )
         code = generate_message_module(defn, root_package="zros2_msgs")
@@ -364,7 +475,9 @@ class TestGenerateMessageRootPackage:
 
     def test_root_package_in_registry_import(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32")],
         )
         code = generate_message_module(defn, root_package="my_msgs")
@@ -376,12 +489,15 @@ class TestGenerateMessageRootPackage:
 # generate_message_module — syntax validation
 # ======================================================================
 
+
 class TestGenerateMessageSyntax:
     """Every generated module must be valid Python."""
 
     def test_simple_compiles(self):
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32")],
         )
         code = generate_message_module(defn)
@@ -389,7 +505,9 @@ class TestGenerateMessageSyntax:
 
     def test_empty_message_compiles(self):
         defn = MsgDefinition(
-            package="test", type_name="Empty", type_kind="msg",
+            package="test",
+            type_name="Empty",
+            type_kind="msg",
             fields=[],
         )
         code = generate_message_module(defn)
@@ -397,7 +515,9 @@ class TestGenerateMessageSyntax:
 
     def test_complex_message_compiles(self):
         defn = MsgDefinition(
-            package="test", type_name="Complex", type_kind="msg",
+            package="test",
+            type_name="Complex",
+            type_kind="msg",
             fields=[
                 MsgField(name="x", type_str="int32"),
                 MsgField(name="y", type_str="float64"),
@@ -414,7 +534,9 @@ class TestGenerateMessageSyntax:
 
     def test_nested_type_compiles(self):
         defn = MsgDefinition(
-            package="test", type_name="WithHeader", type_kind="msg",
+            package="test",
+            type_name="WithHeader",
+            type_kind="msg",
             fields=[MsgField(name="header", type_str="std_msgs/msg/Header")],
         )
         code = generate_message_module(defn)
@@ -422,13 +544,15 @@ class TestGenerateMessageSyntax:
 
     def test_constants_compile(self):
         defn = MsgDefinition(
-            package="test", type_name="WithConst", type_kind="msg",
+            package="test",
+            type_name="WithConst",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32")],
             constants=[
-                MsgField(name="FOO", type_str="int32",
-                         default="42", is_constant=True),
-                MsgField(name="BAR", type_str="float64",
-                         default="3.14", is_constant=True),
+                MsgField(name="FOO", type_str="int32", default="42", is_constant=True),
+                MsgField(
+                    name="BAR", type_str="float64", default="3.14", is_constant=True
+                ),
             ],
         )
         code = generate_message_module(defn)
@@ -439,10 +563,13 @@ class TestGenerateMessageSyntax:
 # generate_message_module — empty / no-field edge cases
 # ======================================================================
 
+
 class TestGenerateMessageEdgeCases:
     def test_no_fields_no_constants(self):
         defn = MsgDefinition(
-            package="test", type_name="Empty", type_kind="msg",
+            package="test",
+            type_name="Empty",
+            type_kind="msg",
         )
         code = generate_message_module(defn)
         # With zero fields the __init__ body is ``pass``, which is valid.
@@ -450,9 +577,14 @@ class TestGenerateMessageEdgeCases:
 
     def test_only_constants(self):
         defn = MsgDefinition(
-            package="test", type_name="ConstOnly", type_kind="msg",
-            constants=[MsgField(name="VERSION", type_str="int32",
-                                default="1", is_constant=True)],
+            package="test",
+            type_name="ConstOnly",
+            type_kind="msg",
+            constants=[
+                MsgField(
+                    name="VERSION", type_str="int32", default="1", is_constant=True
+                )
+            ],
         )
         code = generate_message_module(defn)
         assert "ClassVar" in code
@@ -461,7 +593,9 @@ class TestGenerateMessageEdgeCases:
     def test_field_name_with_dash(self):
         """Type names with dashes are replaced by underscores."""
         defn = MsgDefinition(
-            package="test", type_name="my-type", type_kind="msg",
+            package="test",
+            type_name="my-type",
+            type_kind="msg",
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
@@ -470,19 +604,23 @@ class TestGenerateMessageEdgeCases:
     def test_srv_kind(self):
         """The type_kind appears in the module docstring."""
         defn = MsgDefinition(
-            package="test", type_name="Foo_Request", type_kind="srv",
+            package="test",
+            type_name="Foo_Request",
+            type_kind="srv",
             fields=[MsgField(name="x", type_str="int32")],
         )
         code = generate_message_module(defn)
         lines = code.splitlines()
-        doc_lines = [line for line in lines if 'Auto-generated' in line]
-        assert any('srv' in line for line in doc_lines)
+        doc_lines = [line for line in lines if "Auto-generated" in line]
+        assert any("srv" in line for line in doc_lines)
         assert "class Foo_Request(IdlStruct):" in code
 
     def test_optional_annotation_in_init_for_nested(self):
         """Nested types default to an empty instance, NOT Optional."""
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="h", type_str="std_msgs/msg/Header")],
         )
         code = generate_message_module(defn)
@@ -494,7 +632,9 @@ class TestGenerateMessageEdgeCases:
     def test_no_optional_for_primitives(self):
         """Primitives defaulting to None DO NOT get Optional."""
         defn = MsgDefinition(
-            package="test", type_name="Foo", type_kind="msg",
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
             fields=[MsgField(name="x", type_str="int32", default="0")],
         )
         code = generate_message_module(defn)
@@ -504,20 +644,24 @@ class TestGenerateMessageEdgeCases:
         assert "typing import Optional" not in code
 
     def test_constant_time_external_import(self):
-            """A ``time`` constant triggers an external import in generated code."""
-            defn = MsgDefinition(
-                package="test", type_name="WithTime", type_kind="msg",
-                constants=[MsgField(name="NOW", type_str="time",
-                                    default="0", is_constant=True)],
-            )
-            code = generate_message_module(defn)
-            assert "builtin_interfaces" in code
-            assert code.count("builtin_interfaces") >= 1
+        """A ``time`` constant triggers an external import in generated code."""
+        defn = MsgDefinition(
+            package="test",
+            type_name="WithTime",
+            type_kind="msg",
+            constants=[
+                MsgField(name="NOW", type_str="time", default="0", is_constant=True)
+            ],
+        )
+        code = generate_message_module(defn)
+        assert "builtin_interfaces" in code
+        assert code.count("builtin_interfaces") >= 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # to_dict / from_dict runtime correctness
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _clean(code: str) -> str:
     """Remove imports that won't resolve outside a full ROS package tree."""
@@ -532,33 +676,20 @@ def _clean(code: str) -> str:
     return "\n".join(kept)
 
 
-def _exec_class(code: str, name: str | None = None) -> type:
-    """Compile and exec generated source, return the generated class.
-
-    If *name* is given, return that class by name.  Otherwise find it by
-    looking for a type that has ``__ros_name__`` (a dunder set by the codegen
-    on every generated message class).
-    """
-    ns: dict[str, Any] = {}
-    exec(compile(ast.parse(_clean(code)), "<test>", "exec"), ns)
-    if name:
-        return ns[name]
-    for v in ns.values():
-        if isinstance(v, type) and hasattr(v, "__ros_name__"):
-            return v
-    raise RuntimeError("no generated class found")
+def _exec_class(code: str, name: str) -> type:
+    """Load generated source and return the named class."""
+    return _load_generated(_clean(code), name)
 
 
-def _exec_pair(code_a: str, code_b: str,
-               name_a: str, name_b: str) -> tuple[type, type]:
-    """Exec two generated modules in the same namespace (cross-ref support).
+def _exec_pair(code_a: str, code_b: str, name_a: str, name_b: str) -> tuple[type, type]:
+    """Load two generated modules in the same namespace (cross-ref support).
 
     Returns ``(type_a, type_b)`` by their expected class names.
     """
-    ns: dict[str, Any] = {}
-    exec(compile(ast.parse(_clean(code_a)), "<a>", "exec"), ns)
-    exec(compile(ast.parse(_clean(code_b)), "<b>", "exec"), ns)
-    return ns[name_a], ns[name_b]
+    ns: dict = {}
+    cls_a = _load_generated(_clean(code_a), name_a, ns)
+    cls_b = _load_generated(_clean(code_b), name_b, ns)
+    return cls_a, cls_b
 
 
 class TestGeneratedToDictFromDict:
@@ -566,14 +697,18 @@ class TestGeneratedToDictFromDict:
 
     def test_flat_message(self):
         """Primitive fields: to_dict returns correct dict, from_dict roundtrips."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="Point", type_kind="msg",
-            fields=[
-                MsgField(name="x", type_str="float64"),
-                MsgField(name="y", type_str="float64"),
-                MsgField(name="label", type_str="string"),
-            ],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="Point",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="x", type_str="float64"),
+                    MsgField(name="y", type_str="float64"),
+                    MsgField(name="label", type_str="string"),
+                ],
+            )
+        )
         Point = _exec_class(code, "Point")
         p = Point(x=1.5, y=2.5, label="origin")
 
@@ -587,13 +722,17 @@ class TestGeneratedToDictFromDict:
 
     def test_array_field(self):
         """Primitive array field: to_dict returns list, from_dict roundtrips."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="WithArray", type_kind="msg",
-            fields=[
-                MsgField(name="values", type_str="float64[]"),
-                MsgField(name="id", type_str="int32"),
-            ],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="WithArray",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="values", type_str="float64[]"),
+                    MsgField(name="id", type_str="int32"),
+                ],
+            )
+        )
         Cls = _exec_class(code, "WithArray")
         obj = Cls(values=[1.0, 2.0, 3.0], id=42)
 
@@ -606,20 +745,28 @@ class TestGeneratedToDictFromDict:
 
     def test_nested_message(self):
         """Nested message field: to_dict/from_dict recurse correctly."""
-        inner_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Inner", type_kind="msg",
-            fields=[
-                MsgField(name="x", type_str="float64"),
-                MsgField(name="y", type_str="float64"),
-            ],
-        ))
-        outer_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Outer", type_kind="msg",
-            fields=[
-                MsgField(name="inner", type_str="nest/Inner"),
-                MsgField(name="label", type_str="string"),
-            ],
-        ))
+        inner_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Inner",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="x", type_str="float64"),
+                    MsgField(name="y", type_str="float64"),
+                ],
+            )
+        )
+        outer_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Outer",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="inner", type_str="nest/Inner"),
+                    MsgField(name="label", type_str="string"),
+                ],
+            )
+        )
         Inner, Outer = _exec_pair(inner_code, outer_code, "Inner", "Outer")
 
         obj = Outer(inner=Inner(x=1.0, y=2.0), label="pt")
@@ -633,25 +780,36 @@ class TestGeneratedToDictFromDict:
 
     def test_nested_array(self):
         """Sequence of nested messages: list comprehension in to_dict/from_dict."""
-        inner_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Item", type_kind="msg",
-            fields=[
-                MsgField(name="val", type_str="int32"),
-                MsgField(name="name", type_str="string"),
-            ],
-        ))
-        outer_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Container", type_kind="msg",
-            fields=[
-                MsgField(name="items", type_str="sequence<nest/Item>"),
-                MsgField(name="id", type_str="int32"),
-            ],
-        ))
+        inner_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Item",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="val", type_str="int32"),
+                    MsgField(name="name", type_str="string"),
+                ],
+            )
+        )
+        outer_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Container",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="items", type_str="sequence<nest/Item>"),
+                    MsgField(name="id", type_str="int32"),
+                ],
+            )
+        )
         Item, Container = _exec_pair(inner_code, outer_code, "Item", "Container")
 
         obj = Container(items=[Item(val=1, name="a"), Item(val=2, name="b")], id=99)
         d = obj.to_dict()
-        assert d == {"items": [{"val": 1, "name": "a"}, {"val": 2, "name": "b"}], "id": 99}
+        assert d == {
+            "items": [{"val": 1, "name": "a"}, {"val": 2, "name": "b"}],
+            "id": 99,
+        }
 
         obj2 = Container.from_dict(d)
         assert obj2.id == 99
@@ -661,10 +819,14 @@ class TestGeneratedToDictFromDict:
 
     def test_fixed_array_uint8(self):
         """Fixed-size primitive array (e.g. uint8[16] for UUID)."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="UUID", type_kind="msg",
-            fields=[MsgField(name="uuid", type_str="uint8[16]")],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="UUID",
+                type_kind="msg",
+                fields=[MsgField(name="uuid", type_str="uint8[16]")],
+            )
+        )
         Cls = _exec_class(code, "UUID")
         obj = Cls(uuid=(0,) * 16)
         d = obj.to_dict()
@@ -676,17 +838,21 @@ class TestGeneratedToDictFromDict:
 
     def test_all_field_types_roundtrip(self):
         """Message with every primitive type — comprehensive roundtrip."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="AllTypes", type_kind="msg",
-            fields=[
-                MsgField(name="a", type_str="int32"),
-                MsgField(name="b", type_str="float64"),
-                MsgField(name="c", type_str="string"),
-                MsgField(name="d", type_str="bool"),
-                MsgField(name="e", type_str="float64[]"),
-                MsgField(name="f", type_str="uint8[4]"),
-            ],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="AllTypes",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="a", type_str="int32"),
+                    MsgField(name="b", type_str="float64"),
+                    MsgField(name="c", type_str="string"),
+                    MsgField(name="d", type_str="bool"),
+                    MsgField(name="e", type_str="float64[]"),
+                    MsgField(name="f", type_str="uint8[4]"),
+                ],
+            )
+        )
         Cls = _exec_class(code, "AllTypes")
         obj = Cls(a=42, b=3.14, c="hello", d=True, e=[1.0, 2.0], f=(10, 20, 30, 40))
 
@@ -706,13 +872,17 @@ class TestGeneratedToDictFromDict:
 
     def test_empty_array(self):
         """Sequence field with empty list."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="EmptyArr", type_kind="msg",
-            fields=[
-                MsgField(name="values", type_str="float64[]"),
-                MsgField(name="id", type_str="int32"),
-            ],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="EmptyArr",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="values", type_str="float64[]"),
+                    MsgField(name="id", type_str="int32"),
+                ],
+            )
+        )
         Cls = _exec_class(code, "EmptyArr")
         obj = Cls(values=[], id=0)
 
@@ -725,10 +895,14 @@ class TestGeneratedToDictFromDict:
 
     def test_bounded_string(self):
         """Bounded string field (string<=N)."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="Bounded", type_kind="msg",
-            fields=[MsgField(name="name", type_str="string<=128")],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="Bounded",
+                type_kind="msg",
+                fields=[MsgField(name="name", type_str="string<=128")],
+            )
+        )
         Cls = _exec_class(code, "Bounded")
         obj = Cls(name="hello")
 
@@ -741,29 +915,44 @@ class TestGeneratedToDictFromDict:
     def test_from_dict_missing_key(self):
         """from_dict with missing field raises KeyError."""
         import pytest
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="WithField", type_kind="msg",
-            fields=[MsgField(name="x", type_str="int32"),
-                    MsgField(name="y", type_str="int32")],
-        ))
+
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="WithField",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="x", type_str="int32"),
+                    MsgField(name="y", type_str="int32"),
+                ],
+            )
+        )
         Cls = _exec_class(code, "WithField")
         with pytest.raises(KeyError):
             Cls.from_dict({"x": 1})
 
     def test_wide_nesting_roundtrip(self):
         """Outer with 3 inner branches — exercises multiple nested calls."""
-        inner_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Leaf", type_kind="msg",
-            fields=[MsgField(name="val", type_str="int32")],
-        ))
-        outer_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Wide", type_kind="msg",
-            fields=[
-                MsgField(name="left", type_str="nest/Leaf"),
-                MsgField(name="right", type_str="nest/Leaf"),
-                MsgField(name="center", type_str="nest/Leaf"),
-            ],
-        ))
+        inner_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Leaf",
+                type_kind="msg",
+                fields=[MsgField(name="val", type_str="int32")],
+            )
+        )
+        outer_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Wide",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="left", type_str="nest/Leaf"),
+                    MsgField(name="right", type_str="nest/Leaf"),
+                    MsgField(name="center", type_str="nest/Leaf"),
+                ],
+            )
+        )
         Leaf, Wide = _exec_pair(inner_code, outer_code, "Leaf", "Wide")
 
         obj = Wide(left=Leaf(val=1), right=Leaf(val=2), center=Leaf(val=3))
@@ -777,15 +966,19 @@ class TestGeneratedToDictFromDict:
 
     def test_to_dict_from_dict_roundtrip_identity(self):
         """Roundtrip to_dict → from_dict preserves all values."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="Rt", type_kind="msg",
-            fields=[
-                MsgField(name="a", type_str="int32"),
-                MsgField(name="b", type_str="float64"),
-                MsgField(name="c", type_str="string"),
-                MsgField(name="d", type_str="bool"),
-            ],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="Rt",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="a", type_str="int32"),
+                    MsgField(name="b", type_str="float64"),
+                    MsgField(name="c", type_str="string"),
+                    MsgField(name="d", type_str="bool"),
+                ],
+            )
+        )
         Cls = _exec_class(code, "Rt")
         original = Cls(a=1, b=2.0, c="x", d=True)
         restored = Cls.from_dict(original.to_dict())
@@ -796,29 +989,52 @@ class TestGeneratedToDictFromDict:
 
     def test_deep_chain_roundtrip(self):
         """3-level deep chain: Outer → Mid → Inner."""
-        leaf_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Leaf", type_kind="msg",
-            fields=[MsgField(name="val", type_str="int32")],
-        ))
-        mid_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Mid", type_kind="msg",
-            fields=[
-                MsgField(name="child", type_str="nest/Leaf"),
-                MsgField(name="val", type_str="int32"),
-            ],
-        ))
-        top_code = generate_message_module(MsgDefinition(
-            package="nest", type_name="Top", type_kind="msg",
-            fields=[
-                MsgField(name="child", type_str="nest/Mid"),
-                MsgField(name="val", type_str="int32"),
-            ],
-        ))
+        leaf_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Leaf",
+                type_kind="msg",
+                fields=[MsgField(name="val", type_str="int32")],
+            )
+        )
+        mid_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Mid",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="child", type_str="nest/Leaf"),
+                    MsgField(name="val", type_str="int32"),
+                ],
+            )
+        )
+        top_code = generate_message_module(
+            MsgDefinition(
+                package="nest",
+                type_name="Top",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="child", type_str="nest/Mid"),
+                    MsgField(name="val", type_str="int32"),
+                ],
+            )
+        )
         ns: dict = {}
-        for src in (leaf_code, mid_code, top_code):
-            kept = [line for line in src.splitlines() if not line.startswith("from ") or any(
-                        line.startswith(f"from {p}") for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections"))]
-            exec(compile(ast.parse("\n".join(kept)), "<gen>", "exec"), ns)
+        for src, src_name in [
+            (leaf_code, "Leaf"),
+            (mid_code, "Mid"),
+            (top_code, "Top"),
+        ]:
+            kept = [
+                line
+                for line in src.splitlines()
+                if not line.startswith("from ")
+                or any(
+                    line.startswith(f"from {p}")
+                    for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections")
+                )
+            ]
+            _load_generated("\n".join(kept), src_name, ns)
 
         obj = ns["Top"](child=ns["Mid"](child=ns["Leaf"](val=1), val=2), val=3)
         d = obj.to_dict()
@@ -831,10 +1047,14 @@ class TestGeneratedToDictFromDict:
 
     def test_large_array_roundtrip(self):
         """Array with 100 elements."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="Large", type_kind="msg",
-            fields=[MsgField(name="values", type_str="float64[]")],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="Large",
+                type_kind="msg",
+                fields=[MsgField(name="values", type_str="float64[]")],
+            )
+        )
         Cls = _exec_class(code, "Large")
         data = [float(i) for i in range(100)]
         obj = Cls(values=data)
@@ -849,13 +1069,17 @@ class TestGeneratedToDictFromDict:
 
     def test_bounded_sequence_roundtrip(self):
         """Bounded sequence (sequence<T,N>)."""
-        code = generate_message_module(MsgDefinition(
-            package="test", type_name="BoundedSeq", type_kind="msg",
-            fields=[
-                MsgField(name="vals", type_str="sequence<int32,10>"),
-                MsgField(name="id", type_str="int32"),
-            ],
-        ))
+        code = generate_message_module(
+            MsgDefinition(
+                package="test",
+                type_name="BoundedSeq",
+                type_kind="msg",
+                fields=[
+                    MsgField(name="vals", type_str="sequence<int32,10>"),
+                    MsgField(name="id", type_str="int32"),
+                ],
+            )
+        )
         Cls = _exec_class(code, "BoundedSeq")
         obj = Cls(vals=[1, 2, 3], id=99)
 
@@ -881,7 +1105,7 @@ class TestCodegenRobustness:
 
     def test_is_container_type_true(self):
         """Array/sequence type strings return True."""
-        from zros2.generator._codegen._msg import _is_container_type
+        from zros2.generator.codegen.message import _is_container_type
 
         assert _is_container_type("int32[]") is True
         assert _is_container_type("float64[3]") is True
@@ -891,7 +1115,7 @@ class TestCodegenRobustness:
 
     def test_is_container_type_false(self):
         """Scalar type strings return False."""
-        from zros2.generator._codegen._msg import _is_container_type
+        from zros2.generator.codegen.message import _is_container_type
 
         assert _is_container_type("int32") is False
         assert _is_container_type("float64") is False
@@ -900,7 +1124,7 @@ class TestCodegenRobustness:
 
     def test_is_container_type_malformed(self):
         """Unparseable type strings return False without crashing."""
-        from zros2.generator._codegen._msg import _is_container_type
+        from zros2.generator.codegen.message import _is_container_type
 
         assert _is_container_type("") is False
         assert _is_container_type("int32[") is False
@@ -910,18 +1134,27 @@ class TestCodegenRobustness:
     def test_generate_invalid_class_name_raises(self):
         """Empty or malformed type_name raises ValueError."""
         import pytest
-        from zros2.generator._codegen._msg import generate_message_module
-        from zros2.generator._parser import MsgDefinition
+
+        from zros2.generator.codegen.message import generate_message_module
+        from zros2.generator.parsing.models import MsgDefinition
 
         with pytest.raises(ValueError, match="Invalid type_name"):
-            generate_message_module(MsgDefinition(
-                package="test", type_name="", type_kind="msg",
-            ))
+            generate_message_module(
+                MsgDefinition(
+                    package="test",
+                    type_name="",
+                    type_kind="msg",
+                )
+            )
 
         with pytest.raises(ValueError, match="Invalid type_name"):
-            generate_message_module(MsgDefinition(
-                package="test", type_name="/", type_kind="msg",
-            ))
+            generate_message_module(
+                MsgDefinition(
+                    package="test",
+                    type_name="/",
+                    type_kind="msg",
+                )
+            )
 
 
 class TestFromAttributes:
@@ -947,6 +1180,7 @@ class TestFromAttributes:
     def test_missing_field_raises(self):
         """Object missing a required field raises KeyError."""
         import pytest
+
         from tests._test_msgs import PairMsg
 
         obj = type("Obj", (), {"value": 1})()
@@ -956,6 +1190,7 @@ class TestFromAttributes:
     def test_wrong_type_raises(self):
         """Object field with incompatible type raises TypeError."""
         import pytest
+
         from tests._test_msgs import IntMsg
 
         obj = type("Obj", (), {"data": "not an int"})()

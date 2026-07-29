@@ -1,107 +1,103 @@
-"""Unit tests for ``zros2.generator._utilities``."""
+"""Unit tests for ``zros2.generator.semantics.utilities``."""
 
 import ast
 
-from zros2.generator._utilities import (
-    _to_snake_case,
-    _default_expr,
-    _format_pycdr2_imports,
+from zros2.generator.semantics.utilities import (
     _format_external_imports,
-    _generated_metadata_stmts,
+    _format_pycdr2_imports,
+    default_expr,
+    generated_metadata_stmts,
+    to_snake_case,
 )
 
+# ======================================================================
+# to_snake_case
+# ======================================================================
 
-# ======================================================================
-# _to_snake_case
-# ======================================================================
 
 class TestToSnakeCase:
     def test_simple(self):
-        assert _to_snake_case("Duration") == "duration"
-        assert _to_snake_case("String") == "string"
+        assert to_snake_case("Duration") == "duration"
+        assert to_snake_case("String") == "string"
 
     def test_pascal_case(self):
-        assert _to_snake_case("DiagnosticStatus") == "diagnostic_status"
-        assert _to_snake_case("GetGeographicMap") == "get_geographic_map"
+        assert to_snake_case("DiagnosticStatus") == "diagnostic_status"
+        assert to_snake_case("GetGeographicMap") == "get_geographic_map"
 
     def test_with_underscores(self):
+        assert to_snake_case("GetGeographicMap_Request") == "get_geographic_map_request"
         assert (
-            _to_snake_case("GetGeographicMap_Request")
-            == "get_geographic_map_request"
-        )
-        assert (
-            _to_snake_case("ShutdownRobot_SendGoal_Request")
+            to_snake_case("ShutdownRobot_SendGoal_Request")
             == "shutdown_robot_send_goal_request"
         )
 
     def test_acronym(self):
-        assert _to_snake_case("UUID") == "uuid"
-        assert _to_snake_case("GetUUID") == "get_uuid"
+        assert to_snake_case("UUID") == "uuid"
+        assert to_snake_case("GetUUID") == "get_uuid"
 
     def test_multi_underscore(self):
-        assert (
-            _to_snake_case("Foo_Bar_Baz")
-            == "foo_bar_baz"
-        )
+        assert to_snake_case("Foo_Bar_Baz") == "foo_bar_baz"
 
 
 # ======================================================================
-# _default_expr
+# default_expr
 # ======================================================================
+
 
 class TestDefaultExpr:
     def test_int_types(self):
-        assert _default_expr("int32") == "0"
-        assert _default_expr("uint8") == "0"
-        assert _default_expr("int64") == "0"
-        assert _default_expr("byte") == "0"
-        assert _default_expr("char") == "0"
+        assert default_expr("int32") == "0"
+        assert default_expr("uint8") == "0"
+        assert default_expr("int64") == "0"
+        assert default_expr("byte") == "0"
+        assert default_expr("char") == "0"
 
     def test_float_types(self):
-        assert _default_expr("float32") == "0.0"
-        assert _default_expr("float64") == "0.0"
+        assert default_expr("float32") == "0.0"
+        assert default_expr("float64") == "0.0"
 
     def test_string_types(self):
-        assert _default_expr("string") == '""'
-        assert _default_expr("wstring") == '""'
+        assert default_expr("string") == '""'
+        assert default_expr("wstring") == '""'
 
     def test_bool(self):
-        assert _default_expr("bool") == "False"
+        assert default_expr("bool") == "False"
 
     def test_array_types(self):
-        assert _default_expr("int32[]") == "()"
-        assert _default_expr("uint8[]") == "()"
-        assert _default_expr("float64[]") == "()"
+        assert default_expr("int32[]") == "()"
+        assert default_expr("uint8[]") == "()"
+        assert default_expr("float64[]") == "()"
 
     def test_fixed_array(self):
-        assert _default_expr("int32[3]") == "()"
-        assert _default_expr("uint8[16]") == "(0,) * 16"
+        assert default_expr("int32[3]") == "()"
+        assert default_expr("uint8[16]") == "(0,) * 16"
 
     def test_sequence(self):
-        assert _default_expr("sequence<uint8>") == "()"
-        assert _default_expr("sequence<int32>") == "()"
-        assert _default_expr("sequence<float64>") == "()"
+        assert default_expr("sequence<uint8>") == "()"
+        assert default_expr("sequence<int32>") == "()"
+        assert default_expr("sequence<float64>") == "()"
 
     def test_bounded_string(self):
-        assert _default_expr("string<=255") == '""'
-        assert _default_expr("string<=100") == '""'
+        assert default_expr("string<=255") == '""'
+        assert default_expr("string<=100") == '""'
 
     def test_time_and_duration(self):
-        assert _default_expr("time") == "None"
-        assert _default_expr("duration") == "None"
+        assert default_expr("time") == "None"
+        assert default_expr("duration") == "None"
 
     def test_nested_type(self):
-        assert _default_expr("std_msgs/msg/Header") == "None"
-        assert _default_expr("geometry_msgs/Point") == "None"
+        assert default_expr("std_msgs/msg/Header") == "None"
+        assert default_expr("geometry_msgs/Point") == "None"
 
     def test_unknown_type(self):
-        assert _default_expr("something/weird") == "None"
-        assert _default_expr("") == "None"
+        assert default_expr("something/weird") == "None"
+        assert default_expr("") == "None"
 
 
 # ======================================================================
 # _format_pycdr2_imports
 # ======================================================================
+
 
 class TestFormatPycdr2Imports:
     def test_empty(self):
@@ -145,14 +141,13 @@ class TestFormatPycdr2Imports:
 # _format_external_imports
 # ======================================================================
 
+
 class TestFormatExternalImports:
     def test_empty(self):
         assert _format_external_imports([]) == ""
 
     def test_single(self):
-        result = _format_external_imports(
-            ["from std_msgs.msg.header import Header"]
-        )
+        result = _format_external_imports(["from std_msgs.msg.header import Header"])
         assert result == "from std_msgs.msg.header import Header"
 
     def test_multiple(self):
@@ -184,12 +179,13 @@ class TestFormatExternalImports:
 
 
 # ======================================================================
-# _generated_metadata_stmts
+# generated_metadata_stmts
 # ======================================================================
+
 
 class TestGeneratedMetadataStmts:
     def test_with_source(self):
-        stmts = _generated_metadata_stmts("std_msgs/msg/String.msg")
+        stmts = generated_metadata_stmts("std_msgs/msg/String.msg")
         mod = ast.fix_missing_locations(ast.Module(body=stmts, type_ignores=[]))
         code = ast.unparse(mod)
         assert "__generated__ = True" in code
@@ -197,7 +193,7 @@ class TestGeneratedMetadataStmts:
         assert "std_msgs/msg/String.msg" in code
 
     def test_without_source(self):
-        stmts = _generated_metadata_stmts()
+        stmts = generated_metadata_stmts()
         mod = ast.fix_missing_locations(ast.Module(body=stmts, type_ignores=[]))
         code = ast.unparse(mod)
         assert "__generated__ = True" in code
@@ -207,6 +203,6 @@ class TestGeneratedMetadataStmts:
     def test_not_annotated(self):
         """Metadata must NOT use AnnAssign, so it never leaks into
         ``__annotations__``."""
-        for stmt in _generated_metadata_stmts("x.msg"):
+        for stmt in generated_metadata_stmts("x.msg"):
             assert not isinstance(stmt, ast.AnnAssign)
             assert isinstance(stmt, ast.Assign)

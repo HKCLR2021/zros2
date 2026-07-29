@@ -7,28 +7,46 @@ Pass ``namespace=""`` to use unnamespaced topics.
 """
 
 import os
+import types
 
 import zenoh
 
-from ._action import Action
-from ._liveliness import Liveliness, LivelinessType, Qos
-from ._proxies import ZenohSessionProxy
-from ._publisher import Publisher
-from ._service import ServiceClient
-from ._subscriber import Subscriber
+from ._session import ZenohSessionProxy
+from .discovery import Liveliness, LivelinessType, Qos
+from .endpoints import Action, Publisher, ServiceClient, Subscriber
+from .types import (
+    FBMsgT as _FBMsgT,
+)
+from .types import (
+    FeedbackT as _FeedbackT,
+)
+from .types import (
+    GoalT as _GoalT,
+)
+from .types import (
+    GRReqT as _GRReqT,
+)
+from .types import (
+    GRResT as _GRResT,
+)
+from .types import (
+    MsgT as _MsgT,
+)
+from .types import (
+    ReqT as _ReqT,
+)
+from .types import (
+    ResT as _ResT,
+)
+from .types import (
+    ResultT as _ResultT,
+)
 from .types import RosAction, RosService
-from .types._base import (
-    _ReqT,
-    _ResT,
-    _MsgT,
-    _SGReqT,
-    _SGResT,
-    _GRReqT,
-    _GRResT,
-    _FBMsgT,
-    _GoalT,
-    _ResultT,
-    _FeedbackT,
+from .types import (
+    SGReqT as _SGReqT,
+)
+from .types import (
+    SGResT as _SGResT,
 )
 
 
@@ -54,16 +72,16 @@ class ZRosClient:
         self,
         config: str | zenoh.Config,
     ):
+        if not isinstance(config, (str, zenoh.Config)):
+            raise TypeError(
+                f"Expected str or zenoh.Config, got {type(config).__name__}"
+            )
         if isinstance(config, str):
             if not os.path.exists(config):
                 raise FileNotFoundError("Zenoh Config file not found")
             zenoh_config = zenoh.Config.from_file(config)
-        elif isinstance(config, zenoh.Config):
-            zenoh_config = config
         else:
-            raise TypeError(
-                f"Expected str or zenoh.Config, got {type(config).__name__}"
-            )
+            zenoh_config = config
 
         self._zenoh_session: zenoh.Session = zenoh.open(zenoh_config)
         self._session_proxy: ZenohSessionProxy = ZenohSessionProxy(self._zenoh_session)
@@ -77,7 +95,12 @@ class ZRosClient:
         self._zenoh_session.__enter__()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Exit the context manager and clean up Zenoh resources."""
         self._zenoh_session.__exit__(exc_type, exc_val, exc_tb)
 
@@ -163,11 +186,24 @@ class ZRosClient:
     def create_action_client(
         self,
         action_name: str,
-        action_type: type[RosAction[_SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _GoalT, _ResultT, _FeedbackT]],
+        action_type: type[
+            RosAction[
+                _SGReqT,
+                _SGResT,
+                _GRReqT,
+                _GRResT,
+                _FBMsgT,
+                _GoalT,
+                _ResultT,
+                _FeedbackT,
+            ]
+        ],
         timeout: int | None = None,
         *,
         namespace: str = "",
-    ) -> Action[_SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _GoalT, _ResultT, _FeedbackT]:
+    ) -> Action[
+        _SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _GoalT, _ResultT, _FeedbackT
+    ]:
         """Create an action client for long-running tasks.
 
         Args:
@@ -192,7 +228,7 @@ class ZRosClient:
         entity: LivelinessType,
         name: str = "*",
         ros2_type: str = "*",
-        qos: Qos | str = Qos.any(),
+        qos: Qos | str | None = None,
         *,
         namespace: str = "",
     ) -> Liveliness:
@@ -209,6 +245,8 @@ class ZRosClient:
         Returns:
             Liveliness: Configured liveliness helper.
         """
+        if qos is None:
+            qos = Qos.any()
         full = f"{namespace}/{name.lstrip('/')}" if namespace else name
         return Liveliness(
             self._session_proxy,

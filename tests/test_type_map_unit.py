@@ -1,25 +1,22 @@
-"""Component-level tests for ``zros2.generator._type_map``.
+"""Component-level tests for ``zros2.generator.semantics.resolve_types``.
 
 Tests the type resolution layer that maps ROS 2 type expressions to pycdr2
 annotation expressions.  Covers every primitive, container, and nested-type
 code path, including edge cases for bounded strings, sequences, arrays,
 external imports, and the ``root_package`` prefix logic.
 """
-from dataclasses import dataclass
 
-from lark import LarkError
-
-from zros2.generator._type_map import (
+from zros2.generator.semantics import get_default_value
+from zros2.generator.semantics.resolve_types import (
     ResolvedType,
-    resolve_type,
     is_primitive,
-    get_default_value,
+    resolve_type,
 )
-
 
 # ======================================================================
 # ResolvedType structure
 # ======================================================================
+
 
 class TestResolvedType:
     def test_dataclass_fields(self):
@@ -36,6 +33,7 @@ class TestResolvedType:
 # ======================================================================
 # resolve_type — scalar primitives
 # ======================================================================
+
 
 class TestResolveScalarPrimitives:
     def test_int32(self):
@@ -85,6 +83,7 @@ class TestResolveScalarPrimitives:
 # resolve_type — time / duration (special external types)
 # ======================================================================
 
+
 class TestResolveTimeDuration:
     def test_time(self):
         rt = resolve_type("time")
@@ -111,6 +110,7 @@ class TestResolveTimeDuration:
 # resolve_type — bounded string
 # ======================================================================
 
+
 class TestResolveBoundedString:
     def test_bounded_string(self):
         rt = resolve_type("string<=128")
@@ -132,6 +132,7 @@ class TestResolveBoundedString:
 # ======================================================================
 # resolve_type — arrays
 # ======================================================================
+
 
 class TestResolveArrays:
     def test_unbounded_array(self):
@@ -176,6 +177,7 @@ class TestResolveArrays:
 # resolve_type — sequences
 # ======================================================================
 
+
 class TestResolveSequences:
     def test_unbounded_sequence(self):
         rt = resolve_type("sequence<uint8>")
@@ -195,14 +197,16 @@ class TestResolveSequences:
 
     def test_sequence_of_nested_type(self):
         rt = resolve_type(
-            "sequence<std_msgs/msg/String>", current_package="test",
+            "sequence<std_msgs/msg/String>",
+            current_package="test",
         )
         assert rt.external_import is not None
         assert "String" in rt.annotation_expr
 
     def test_bounded_sequence_of_nested_type(self):
         rt = resolve_type(
-            "sequence<geometry_msgs/msg/Point,5>", current_package="test",
+            "sequence<geometry_msgs/msg/Point,5>",
+            current_package="test",
         )
         assert "5" in rt.annotation_expr
         assert rt.external_import is not None
@@ -211,6 +215,7 @@ class TestResolveSequences:
 # ======================================================================
 # resolve_type — nested types
 # ======================================================================
+
 
 class TestResolveNestedTypes:
     def test_fully_qualified_three_part(self):
@@ -229,6 +234,7 @@ class TestResolveNestedTypes:
 
     def test_unqualified_in_current_package(self):
         rt = resolve_type("String", current_package="my_pkg")
+        assert rt.external_import is not None
         assert "my_pkg" in rt.external_import
         assert rt.annotation_expr == "String"
 
@@ -238,33 +244,40 @@ class TestResolveNestedTypes:
             current_package="test",
             root_package="zros2_msgs",
         )
+        assert rt.external_import is not None
         assert "zros2_msgs.std_msgs" in rt.external_import
 
     def test_srv_type_reference(self):
         rt = resolve_type(
-            "my_pkg/srv/Foo", current_package="test",
+            "my_pkg/srv/Foo",
+            current_package="test",
         )
         assert rt.annotation_expr == "Foo"
+        assert rt.external_import is not None
         assert "srv" in rt.external_import
         assert "_foo" in rt.external_import
 
     def test_action_type_reference(self):
         rt = resolve_type(
-            "my_pkg/action/Bar", current_package="test",
+            "my_pkg/action/Bar",
+            current_package="test",
         )
         assert rt.annotation_expr == "Bar"
+        assert rt.external_import is not None
         assert "action" in rt.external_import
 
     def test_cross_package_without_msg(self):
         """'pkg/Type' without /msg/ should resolve to pkg/msg/Type."""
         rt = resolve_type("my_pkg/Header", current_package="other")
         assert rt.annotation_expr == "Header"
+        assert rt.external_import is not None
         assert "my_pkg.msg._header" in rt.external_import
 
 
 # ======================================================================
 # resolve_type — edge cases
 # ======================================================================
+
 
 class TestResolveTypeEdgeCases:
     def test_unknown_type_falls_through_to_identifier(self):
@@ -295,6 +308,7 @@ class TestResolveTypeEdgeCases:
 # ======================================================================
 # is_primitive
 # ======================================================================
+
 
 class TestIsPrimitive:
     def test_primitives(self):
@@ -339,6 +353,7 @@ class TestIsPrimitive:
 # ======================================================================
 # get_default_value (alias for _default_expr)
 # ======================================================================
+
 
 class TestGetDefaultValue:
     def test_int(self):

@@ -6,9 +6,10 @@ These types follow the same pattern as the generated code:
 """
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pycdr2 import IdlStruct
+
 from zros2.types.utils import from_attributes as _from_attributes
 
 
@@ -27,11 +28,11 @@ class StringMsg(IdlStruct):
         return {"data": self.data}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StringMsg":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         return cls(data=data["data"])
 
     @classmethod
-    def from_attributes(cls, obj: Any) -> "StringMsg":
+    def from_attributes(cls, obj: Any) -> Self:
         return _from_attributes(cls, obj)
 
 
@@ -50,11 +51,11 @@ class IntMsg(IdlStruct):
         return {"data": self.data}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "IntMsg":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         return cls(data=data["data"])
 
     @classmethod
-    def from_attributes(cls, obj: Any) -> "IntMsg":
+    def from_attributes(cls, obj: Any) -> Self:
         return _from_attributes(cls, obj)
 
 
@@ -75,11 +76,11 @@ class PairMsg(IdlStruct):
         return {"value": self.value, "label": self.label}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PairMsg":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         return cls(value=data["value"], label=data["label"])
 
     @classmethod
-    def from_attributes(cls, obj: Any) -> "PairMsg":
+    def from_attributes(cls, obj: Any) -> Self:
         return _from_attributes(cls, obj)
 
 

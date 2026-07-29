@@ -1,52 +1,20 @@
-"""ROS 2 .msg / .srv / .action file parser.
+"""Line-oriented .msg / .srv / .action parser — text → IR.
 
-Line-oriented, **zero-regex** parser built on string methods + Lark for type
-expressions.  Handles every syntax form described in the ROS 2 interface
-definition spec.
+Zero-regex parser built on string methods + Lark for type expressions.
+Handles every syntax form described in the ROS 2 interface definition spec.
 """
 
 import pathlib
-from dataclasses import dataclass, field
-from typing import Iterator
 
 from lark import LarkError
 
-from ._type_grammar import ROS2_PRIMITIVE_TYPES, parse_type
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Data models
-# ═══════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class MsgField:
-    """A single field or constant in a ROS 2 message definition."""
-
-    name: str
-    type_str: str          # Raw type as written in the .msg file
-    default: str | None = None
-    is_constant: bool = False
-
-
-@dataclass
-class MsgDefinition:
-    """A parsed ROS 2 message/service/action section."""
-
-    package: str
-    type_name: str
-    type_kind: str         # "msg", "srv", or "action"
-    fields: list[MsgField] = field(default_factory=list)
-    constants: list[MsgField] = field(default_factory=list)
-    full_name: str = ""
-
-    def __post_init__(self) -> None:
-        if not self.full_name:
-            self.full_name = f"{self.package}/{self.type_kind}/{self.type_name}"
-
+from .models import MsgDefinition, MsgField
+from .types import ROS2_PRIMITIVE_TYPES, parse_type
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Inline comment stripping
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _strip_inline_comment(line: str) -> str:
     """Strip a trailing ``#`` comment from *line*.
@@ -59,8 +27,8 @@ def _strip_inline_comment(line: str) -> str:
     """
     out: list[str] = []
     i = 0
-    in_sq = False   # inside single quote
-    in_dq = False   # inside double quote
+    in_sq = False  # inside single quote
+    in_dq = False  # inside double quote
     escape = False
 
     while i < len(line):
@@ -91,7 +59,7 @@ def _strip_inline_comment(line: str) -> str:
             continue
 
         if ch == "#" and not in_sq and not in_dq:
-            break   # start of comment — discard rest of line
+            break  # start of comment — discard rest of line
 
         out.append(ch)
         i += 1
@@ -103,13 +71,45 @@ def _strip_inline_comment(line: str) -> str:
 # Name validation
 # ═══════════════════════════════════════════════════════════════════════════
 
-_PYTHON_KEYWORDS: frozenset[str] = frozenset({
-    "False", "None", "True", "and", "as", "assert", "async", "await",
-    "break", "class", "continue", "def", "del", "elif", "else", "except",
-    "finally", "for", "from", "global", "if", "import", "in", "is",
-    "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
-    "while", "with", "yield",
-})
+_PYTHON_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "False",
+        "None",
+        "True",
+        "and",
+        "as",
+        "assert",
+        "async",
+        "await",
+        "break",
+        "class",
+        "continue",
+        "def",
+        "del",
+        "elif",
+        "else",
+        "except",
+        "finally",
+        "for",
+        "from",
+        "global",
+        "if",
+        "import",
+        "in",
+        "is",
+        "lambda",
+        "nonlocal",
+        "not",
+        "or",
+        "pass",
+        "raise",
+        "return",
+        "try",
+        "while",
+        "with",
+        "yield",
+    }
+)
 
 
 def _is_ascii_alpha(ch: str) -> bool:
@@ -177,6 +177,7 @@ def _is_valid_constant_name(name: str) -> bool:
 # Line-level tokeniser
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def _tokenise_field_line(line: str) -> MsgField:
     """Parse a single non-comment, non-empty ``.msg`` line.
 
@@ -214,40 +215,36 @@ def _tokenise_field_line(line: str) -> MsgField:
     # Find the first whitespace to separate the type token.
     idx = stripped.find(" ")
     if idx < 0:
-        raise ValueError(
-            f"missing field name after type (line is just '{stripped}')"
-        )
+        raise ValueError(f"missing field name after type (line is just '{stripped}')")
     raw_type = stripped[:idx]
     rest = stripped[idx:].strip()
     if not rest:
-        raise ValueError(
-            f"type '{raw_type}' is not followed by a field name"
-        )
+        raise ValueError(f"type '{raw_type}' is not followed by a field name")
 
     # ── Validate type via Lark grammar ────────────────────────────────
     # (catches nonsense like "foo@bar" early)
     try:
         parse_type(raw_type)
     except LarkError as exc:
-        raise ValueError(
-            f"'{raw_type}' is not a valid ROS 2 type: {exc}"
-        ) from exc
+        raise ValueError(f"'{raw_type}' is not a valid ROS 2 type: {exc}") from exc
 
     # ── Constant detection ────────────────────────────────────────────
     # Syntax: NAME=value or NAME = value
     eq_idx = rest.find("=")
     if eq_idx >= 0:
         name = rest[:eq_idx].rstrip()
-        value = rest[eq_idx + 1:].strip()
+        value = rest[eq_idx + 1 :].strip()
         # Valid constant: UPPERCASE name + primitive type
         if _is_valid_constant_name(name) and raw_type in ROS2_PRIMITIVE_TYPES:
-            return MsgField(name=name, type_str=raw_type,
-                            default=value, is_constant=True)
+            return MsgField(
+                name=name, type_str=raw_type, default=value, is_constant=True
+            )
         # Not a valid constant (e.g. lowercase name like "string desc=---").
         # Treat as field with default =value (lenient parse).
         if _is_valid_field_name(name):
-            return MsgField(name=name, type_str=raw_type,
-                            default=value, is_constant=False)
+            return MsgField(
+                name=name, type_str=raw_type, default=value, is_constant=False
+            )
         raise ValueError(
             f"'{name}' is not a valid field or constant name "
             f"(constants must be UPPER_CASE on primitive types; "
@@ -276,13 +273,13 @@ def _tokenise_field_line(line: str) -> MsgField:
             raw_default = raw_default[1:].strip()
         default = raw_default if raw_default else None
 
-    return MsgField(name=name, type_str=raw_type,
-                    default=default, is_constant=False)
+    return MsgField(name=name, type_str=raw_type, default=default, is_constant=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Section splitting (srv / action)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _split_sections(text: str, maxsplit: int = 1) -> list[str]:
     """Split *text* on ``---`` lines, returning at most *maxsplit*+1 sections.
@@ -312,8 +309,10 @@ def _split_sections(text: str, maxsplit: int = 1) -> list[str]:
 # High-level parsers
 # ═══════════════════════════════════════════════════════════════════════════
 
-def parse_msg_text(text: str, *, package: str = "",
-                   type_name: str = "", type_kind: str = "msg") -> MsgDefinition:
+
+def parse_msg_text(
+    text: str, *, package: str = "", type_name: str = "", type_kind: str = "msg"
+) -> MsgDefinition:
     """Parse a ROS 2 message definition string.
 
     Args:
@@ -325,8 +324,7 @@ def parse_msg_text(text: str, *, package: str = "",
     Returns:
         A ``MsgDefinition``.
     """
-    defn = MsgDefinition(package=package, type_name=type_name,
-                         type_kind=type_kind)
+    defn = MsgDefinition(package=package, type_name=type_name, type_kind=type_kind)
 
     lines = text.splitlines()
     for lineno, line in enumerate(lines, start=1):
@@ -344,11 +342,10 @@ def parse_msg_text(text: str, *, package: str = "",
         try:
             field = _tokenise_field_line(clean)
         except ValueError as exc:
-            kind = {"msg": "message", "srv": "service",
-                    "action": "action"}.get(type_kind, "message")
-            raise ValueError(
-                f"{kind} '{defn.full_name}' line {lineno}: {exc}"
-            ) from exc
+            kind = {"msg": "message", "srv": "service", "action": "action"}.get(
+                type_kind, "message"
+            )
+            raise ValueError(f"{kind} '{defn.full_name}' line {lineno}: {exc}") from exc
 
         if field.is_constant:
             defn.constants.append(field)
@@ -364,14 +361,16 @@ def parse_msg_file(file_path: pathlib.Path, package: str) -> MsgDefinition:
         raise ValueError("package name must not be empty")
     text = file_path.read_text(encoding="utf-8")
     try:
-        return parse_msg_text(text, package=package,
-                              type_name=file_path.stem, type_kind="msg")
+        return parse_msg_text(
+            text, package=package, type_name=file_path.stem, type_kind="msg"
+        )
     except ValueError as exc:
         raise ValueError(f"{file_path}: {exc}") from exc
 
 
-def parse_srv_file(file_path: pathlib.Path,
-                   package: str) -> tuple[MsgDefinition, MsgDefinition]:
+def parse_srv_file(
+    file_path: pathlib.Path, package: str
+) -> tuple[MsgDefinition, MsgDefinition]:
     """Parse a single ``.srv`` file into request / response.
 
     Returns:
@@ -391,20 +390,25 @@ def parse_srv_file(file_path: pathlib.Path,
     base_name = file_path.stem
     try:
         request = parse_msg_text(
-            parts[0], package=package,
-            type_name=f"{base_name}_Request", type_kind="srv",
+            parts[0],
+            package=package,
+            type_name=f"{base_name}_Request",
+            type_kind="srv",
         )
         response = parse_msg_text(
-            parts[1], package=package,
-            type_name=f"{base_name}_Response", type_kind="srv",
+            parts[1],
+            package=package,
+            type_name=f"{base_name}_Response",
+            type_kind="srv",
         )
     except ValueError as exc:
         raise ValueError(f"{file_path}: {exc}") from exc
     return request, response
 
 
-def parse_action_file(file_path: pathlib.Path,
-                      package: str) -> tuple[MsgDefinition, ...]:
+def parse_action_file(
+    file_path: pathlib.Path, package: str
+) -> tuple[MsgDefinition, ...]:
     """Parse a single ``.action`` file.
 
     Returns **seven** ``MsgDefinition`` entries:
@@ -423,37 +427,39 @@ def parse_action_file(file_path: pathlib.Path,
             f"expected two '---' separators (goal / result / feedback)"
         )
 
-    goal_text, result_text, feedback_text = (
-        p.strip() for p in parts
-    )
+    goal_text, result_text, feedback_text = (p.strip() for p in parts)
     base_name = file_path.stem
 
     try:
         definitions = {
             f"{base_name}_Goal": parse_msg_text(
-                goal_text, package=package,
-                type_name=f"{base_name}_Goal", type_kind="action",
+                goal_text,
+                package=package,
+                type_name=f"{base_name}_Goal",
+                type_kind="action",
             ),
             f"{base_name}_Result": parse_msg_text(
-                result_text, package=package,
-                type_name=f"{base_name}_Result", type_kind="action",
+                result_text,
+                package=package,
+                type_name=f"{base_name}_Result",
+                type_kind="action",
             ),
             f"{base_name}_Feedback": parse_msg_text(
-                feedback_text, package=package,
-                type_name=f"{base_name}_Feedback", type_kind="action",
+                feedback_text,
+                package=package,
+                type_name=f"{base_name}_Feedback",
+                type_kind="action",
             ),
             # ── FeedbackMessage ───────────────────────────────────────────
             f"{base_name}_FeedbackMessage": parse_msg_text(
-                f"uint8[16] goal_id\n"
-                f"{package}/action/{base_name}_Feedback feedback",
+                f"uint8[16] goal_id\n{package}/action/{base_name}_Feedback feedback",
                 package=package,
                 type_name=f"{base_name}_FeedbackMessage",
                 type_kind="action",
             ),
             # ── SendGoal_Request ──────────────────────────────────────────
             f"{base_name}_SendGoal_Request": parse_msg_text(
-                f"uint8[16] goal_id\n"
-                f"{package}/action/{base_name}_Goal goal",
+                f"uint8[16] goal_id\n{package}/action/{base_name}_Goal goal",
                 package=package,
                 type_name=f"{base_name}_SendGoal_Request",
                 type_kind="action",
@@ -474,8 +480,7 @@ def parse_action_file(file_path: pathlib.Path,
             ),
             # ── GetResult_Response ────────────────────────────────────────
             f"{base_name}_GetResult_Response": parse_msg_text(
-                f"int8 status\n"
-                f"{package}/action/{base_name}_Result result",
+                f"int8 status\n{package}/action/{base_name}_Result result",
                 package=package,
                 type_name=f"{base_name}_GetResult_Response",
                 type_kind="action",
@@ -487,48 +492,9 @@ def parse_action_file(file_path: pathlib.Path,
     return tuple(definitions.values())
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Discovery helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
-def iter_msg_files(msg_dir: pathlib.Path) -> Iterator[tuple[str, pathlib.Path]]:
-    """Yield ``(package_name, file_path)`` for every ``.msg`` file found."""
-    if not msg_dir.is_dir():
-        return
-    package = msg_dir.parent.name if msg_dir.parent.name else msg_dir.name
-    for path in sorted(msg_dir.glob("*.msg")):
-        yield package, path
-
-
-def iter_srv_files(srv_dir: pathlib.Path) -> Iterator[tuple[str, pathlib.Path]]:
-    """Yield ``(package_name, file_path)`` for every ``.srv`` file found."""
-    if not srv_dir.is_dir():
-        return
-    package = srv_dir.parent.name if srv_dir.parent.name else srv_dir.name
-    for path in sorted(srv_dir.glob("*.srv")):
-        yield package, path
-
-
-def iter_action_files(action_dir: pathlib.Path) -> Iterator[tuple[str, pathlib.Path]]:
-    """Yield ``(package_name, file_path)`` for every ``.action`` file found."""
-    if not action_dir.is_dir():
-        return
-    package = action_dir.parent.name if action_dir.parent.name else action_dir.name
-    for path in sorted(action_dir.glob("*.action")):
-        yield package, path
-
-
-def find_msg_dirs(base_paths: list[pathlib.Path]) -> list[pathlib.Path]:
-    """Collect all existing ``msg/`` subdirectories from the given base paths."""
-    dirs: list[pathlib.Path] = []
-    for base in base_paths:
-        if not base.is_dir():
-            continue
-        msg_dir = base / "msg"
-        if msg_dir.is_dir():
-            dirs.append(base)
-        else:
-            for pkg_dir in sorted(base.iterdir()):
-                if pkg_dir.is_dir() and (pkg_dir / "msg").is_dir():
-                    dirs.append(pkg_dir)
-    return dirs
+__all__ = [
+    "parse_action_file",
+    "parse_msg_file",
+    "parse_msg_text",
+    "parse_srv_file",
+]

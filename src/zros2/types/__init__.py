@@ -6,43 +6,43 @@ containers, and serialization helpers for ROS 2 message types.
 Usage::
 
     from zros2.types import RosMessage, ServiceTypes, ActionTypes
-    from zros2.types.utils import from_attributes
+    from zros2.types import from_attributes
 """
 
-from . import utils
 from ._base import (
+    FBMsgT,
+    FeedbackT,
+    GoalT,
+    GRReqT,
+    GRResT,
+    MsgT,
+    ReqT,
+    ResT,
+    ResultT,
     RosMessage,
-    _ReqT as ReqT,
-    _ResT as ResT,
-    _MsgT as MsgT,
-    _SGReqT as SGReqT,
-    _SGResT as SGResT,
-    _GRReqT as GRReqT,
-    _GRResT as GRResT,
-    _FBMsgT as FBMsgT,
-    _GoalT as GoalT,
-    _ResultT as ResultT,
-    _FeedbackT as FeedbackT,
+    SGReqT,
+    SGResT,
 )
-from .protocols import RosService, RosAction
-from .containers import ServiceTypes, ActionTypes
+from .containers import ActionTypes, ServiceTypes
+from .protocols import RosAction, RosService
+from .utils import from_attributes
 
 __all__ = [
-    "utils",
-    "RosMessage",
-    "RosService",
-    "RosAction",
-    "ServiceTypes",
     "ActionTypes",
-    "ReqT",
-    "ResT",
-    "MsgT",
-    "SGReqT",
-    "SGResT",
+    "FBMsgT",
+    "FeedbackT",
     "GRReqT",
     "GRResT",
-    "FBMsgT",
     "GoalT",
+    "MsgT",
+    "ReqT",
+    "ResT",
     "ResultT",
-    "FeedbackT",
+    "RosAction",
+    "RosMessage",
+    "RosService",
+    "SGReqT",
+    "SGResT",
+    "ServiceTypes",
+    "from_attributes",
 ]

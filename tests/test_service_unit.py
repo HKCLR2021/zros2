@@ -1,20 +1,28 @@
-"""Unit tests for :class:`zros2._service.ServiceClient` edge cases."""
+"""Unit tests for :class:`zros2.endpoints.ServiceClient` edge cases."""
 
-from unittest.mock import MagicMock, patch
+from typing import ClassVar, cast
+from unittest.mock import MagicMock
 
 import pytest
 import zenoh
 
-from zros2._service import ServiceClient
+from zros2.endpoints import ServiceClient
 from zros2.exceptions import ServiceInvokeException, ServiceNotAvailableException
+from zros2.types import RosService
 
 from ._test_msgs import IntMsg, PairMsg
 
 
 class _ExampleService:
     """Minimal service type matching expected protocol."""
-    Request = IntMsg
-    Response = PairMsg
+
+    Request: ClassVar[type[IntMsg]] = IntMsg
+    Response: ClassVar[type[PairMsg]] = PairMsg
+
+
+_example_srv: type[RosService[IntMsg, PairMsg]] = cast(
+    type[RosService[IntMsg, PairMsg]], _ExampleService
+)
 
 
 class TestServiceClient:
@@ -24,7 +32,7 @@ class TestServiceClient:
         """Sending a request with a closed session should raise RuntimeError."""
         session = MagicMock()
         session.is_closed.return_value = True
-        client = ServiceClient(session, "test/srv", _ExampleService)
+        client = ServiceClient(session, "test/srv", _example_srv)
         with pytest.raises(RuntimeError, match="closed"):
             client.send_request(IntMsg(data=1), timeout=100)
 
@@ -34,7 +42,7 @@ class TestServiceClient:
         session.is_closed.return_value = False
         # Mock the get call to return an empty iterator (service unavailable)
         session.get.return_value = iter([])
-        client = ServiceClient(session, "test/srv", _ExampleService)
+        client = ServiceClient(session, "test/srv", _example_srv)
         with pytest.raises(ServiceNotAvailableException):
             client.send_request(None, timeout=100)
         # payload should be None (not serialized)
@@ -51,7 +59,7 @@ class TestServiceClient:
         err_reply.err.payload.to_string.return_value = "test error"
         session.get.return_value = iter([err_reply])
 
-        client = ServiceClient(session, "test/srv", _ExampleService)
+        client = ServiceClient(session, "test/srv", _example_srv)
         with pytest.raises(ServiceInvokeException, match="test error"):
             client.send_request(IntMsg(data=1), timeout=100)
 
@@ -61,7 +69,7 @@ class TestServiceClient:
         session.is_closed.return_value = False
         session.get.side_effect = zenoh.ZError("connection lost")
 
-        client = ServiceClient(session, "test/srv", _ExampleService)
+        client = ServiceClient(session, "test/srv", _example_srv)
         with pytest.raises(ServiceInvokeException, match="connection lost"):
             client.send_request(IntMsg(data=1), timeout=100)
 
@@ -71,7 +79,7 @@ class TestServiceClient:
         session.is_closed.return_value = False
         session.get.return_value = iter([])
 
-        client = ServiceClient(session, "test/srv", _ExampleService)
+        client = ServiceClient(session, "test/srv", _example_srv)
         with pytest.raises(ServiceNotAvailableException):
             client.send_request(IntMsg(data=1), timeout=100)
 
@@ -89,7 +97,7 @@ class TestServiceClient:
         ok_reply.ok.payload = payload_bytes
         session.get.return_value = iter([ok_reply])
 
-        client = ServiceClient(session, "test/srv", _ExampleService)
+        client = ServiceClient(session, "test/srv", _example_srv)
         result = client.send_request(IntMsg(data=99), timeout=100)
 
         assert isinstance(result, PairMsg)

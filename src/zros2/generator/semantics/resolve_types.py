@@ -3,24 +3,24 @@
 Resolves ROS 2 type strings (as found in ``.msg`` files) to their
 corresponding pycdr2 annotation expressions and Python import paths.
 
-Type expressions are parsed via :mod:`._type_grammar` (Lark-based) instead
-of regex, ensuring all valid ROS 2 syntax forms are recognised.
+Type expressions are parsed via :mod:`zros2.generator.parsing.types`
+(Lark-based) instead of regex, ensuring all valid ROS 2 syntax forms are
+recognised.
 """
 
 from dataclasses import dataclass
 
 from lark import LarkError
 
-from ._type_grammar import ROS2_PRIMITIVE_TYPES, TypeInfo, parse_type
-from ._utilities import _to_snake_case
-
+from ..parsing.types import ROS2_PRIMITIVE_TYPES, TypeInfo, parse_type
+from .utilities import to_snake_case
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Internal helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _inner_type_str(info: TypeInfo) -> str:
+def inner_type_str(info: TypeInfo) -> str:
     """Reconstruct the inner (wrapped) type string from a ``TypeInfo``.
 
     When a type like ``string<=10[]`` is parsed, the ``TypeInfo.base_name``
@@ -39,6 +39,7 @@ def _inner_type_str(info: TypeInfo) -> str:
 # Resolved type descriptor
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class ResolvedType:
     """Result of resolving a ROS 2 type string.
@@ -51,6 +52,7 @@ class ResolvedType:
         external_import: A Python import statement for a nested ROS2 type,
             or ``None`` if the type is a primitive / pycdr2 built-in.
     """
+
     annotation_expr: str
     import_names: frozenset[str] = frozenset()
     external_import: str | None = None
@@ -61,22 +63,36 @@ class ResolvedType:
 # ═══════════════════════════════════════════════════════════════════════════
 
 _PRIMITIVE_MAP: dict[str, str] = {
-    "bool": "bool", "byte": "uint8", "char": "uint8",
-    "int8": "int8", "uint8": "uint8",
-    "int16": "int16", "uint16": "uint16",
-    "int32": "int32", "uint32": "uint32",
-    "int64": "int64", "uint64": "uint64",
-    "float32": "float32", "float64": "float64",
-    "string": "str", "wstring": "str",
+    "bool": "bool",
+    "byte": "uint8",
+    "char": "uint8",
+    "int8": "int8",
+    "uint8": "uint8",
+    "int16": "int16",
+    "uint16": "uint16",
+    "int32": "int32",
+    "uint32": "uint32",
+    "int64": "int64",
+    "uint64": "uint64",
+    "float32": "float32",
+    "float64": "float64",
+    "string": "str",
+    "wstring": "str",
 }
 
 _PRIMITIVE_IMPORTS: dict[str, str] = {
-    "byte": "uint8", "char": "uint8",
-    "int8": "int8", "uint8": "uint8",
-    "int16": "int16", "uint16": "uint16",
-    "int32": "int32", "uint32": "uint32",
-    "int64": "int64", "uint64": "uint64",
-    "float32": "float32", "float64": "float64",
+    "byte": "uint8",
+    "char": "uint8",
+    "int8": "int8",
+    "uint8": "uint8",
+    "int16": "int16",
+    "uint16": "uint16",
+    "int32": "int32",
+    "uint32": "uint32",
+    "int64": "int64",
+    "uint64": "uint64",
+    "float32": "float32",
+    "float64": "float64",
 }
 
 _PYTHON_BUILTINS: frozenset[str] = frozenset({"bool", "string", "wstring"})
@@ -96,6 +112,7 @@ _EXTERNAL_TYPES: dict[str, tuple[str, str]] = {
 # ═══════════════════════════════════════════════════════════════════════════
 # Resolver
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def resolve_type(
     type_str: str,
@@ -127,7 +144,7 @@ def resolve_type(
 
     # ── Sequence: sequence<T> / sequence<T, N> ─────────────────────────
     if info.kind in ("unbounded_sequence", "bounded_sequence"):
-        inner = resolve_type(_inner_type_str(info), current_package, root_package)
+        inner = resolve_type(inner_type_str(info), current_package, root_package)
         if info.kind == "bounded_sequence" and info.array_max is not None:
             expr = f"sequence[{inner.annotation_expr}, {info.array_max}]"
         else:
@@ -137,7 +154,7 @@ def resolve_type(
 
     # ── Array: type[] / type[N] / type[<=N] ────────────────────────────
     if info.kind in ("unbounded", "fixed", "bounded"):
-        inner = resolve_type(_inner_type_str(info), current_package, root_package)
+        inner = resolve_type(inner_type_str(info), current_package, root_package)
 
         if info.kind == "unbounded":
             expr = f"sequence[{inner.annotation_expr}]"
@@ -167,10 +184,7 @@ def resolve_type(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-
-
-def _resolve_scalar(name: str, current_package: str,
-                    root_package: str) -> ResolvedType:
+def _resolve_scalar(name: str, current_package: str, root_package: str) -> ResolvedType:
     """Resolve a scalar (non-array, non-sequence) type name."""
     # ── time / duration (aliases) ──────────────────────────────────────
     if name.lower() in _EXTERNAL_TYPES:
@@ -189,8 +203,7 @@ def _resolve_scalar(name: str, current_package: str,
     return _resolve_nested(name, current_package, root_package)
 
 
-def _resolve_nested(name: str, current_package: str,
-                    root_package: str) -> ResolvedType:
+def _resolve_nested(name: str, current_package: str, root_package: str) -> ResolvedType:
     """Resolve a nested (non-primitive) type reference."""
     # Normalise to ``pkg/msg/Type`` form
     clean = name
@@ -214,7 +227,7 @@ def _resolve_nested(name: str, current_package: str,
         kind = "msg"
         type_name = "/".join(parts[1:])
 
-    module_path = f"{pkg}.{kind}._{_to_snake_case(type_name)}"
+    module_path = f"{pkg}.{kind}._{to_snake_case(type_name)}"
     if root_package:
         module_path = f"{root_package}.{module_path}"
     import_stmt = f"from {module_path} import {type_name}"
@@ -226,8 +239,7 @@ def _resolve_nested(name: str, current_package: str,
     )
 
 
-def _wrap(expr: str, imports: set[str],
-          external: str | None) -> ResolvedType:
+def _wrap(expr: str, imports: set[str], external: str | None) -> ResolvedType:
     """Build a ``ResolvedType`` with or without external import."""
     if external:
         return ResolvedType(expr, frozenset(imports), external)
@@ -237,6 +249,7 @@ def _wrap(expr: str, imports: set[str],
 # ═══════════════════════════════════════════════════════════════════════════
 # Convenience
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def is_primitive(type_str: str) -> bool:
     """Check if a type string is a ROS 2 primitive type.
@@ -255,7 +268,3 @@ def is_primitive(type_str: str) -> bool:
     if info.base_name in ROS2_PRIMITIVE_TYPES:
         return True
     return info.base_name.lower() in _EXTERNAL_TYPES
-
-
-# Backward-compat alias
-from ._utilities import _default_expr as get_default_value  # noqa: E402,F401

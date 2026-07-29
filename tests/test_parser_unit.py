@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator._parser``.
+"""Component-level tests for ``zros2.generator.parsing.parser`` and ``discovery``.
 
 Tests every internal function in the parser module in isolation:
 - Inline comment stripping (string-state machine)
@@ -10,28 +10,31 @@ Tests every internal function in the parser module in isolation:
 """
 
 import pathlib
+
 import pytest
 
-from zros2.generator._parser import (
-    _strip_inline_comment,
-    _is_valid_field_name,
-    _is_valid_constant_name,
-    _tokenise_field_line,
-    _split_sections,
-    parse_msg_text,
-    parse_msg_file,
-    parse_srv_file,
-    parse_action_file,
+from zros2.generator.parsing.discovery import (
+    find_msg_dirs,
+    iter_action_files,
     iter_msg_files,
     iter_srv_files,
-    iter_action_files,
-    find_msg_dirs,
 )
-
+from zros2.generator.parsing.parser import (
+    _is_valid_constant_name,
+    _is_valid_field_name,
+    _split_sections,
+    _strip_inline_comment,
+    _tokenise_field_line,
+    parse_action_file,
+    parse_msg_file,
+    parse_msg_text,
+    parse_srv_file,
+)
 
 # ======================================================================
 # _strip_inline_comment
 # ======================================================================
+
 
 class TestStripInlineComment:
     """String-state machine that strips ``#`` comments respecting quotes."""
@@ -79,8 +82,8 @@ class TestStripInlineComment:
         assert result == 'string x = "unclosed  # comment'
 
     def test_single_quote_inside_double_quote(self):
-        result = _strip_inline_comment("string x = \"it's fine\"  # comment")
-        assert result == "string x = \"it's fine\""
+        result = _strip_inline_comment('string x = "it\'s fine"  # comment')
+        assert result == 'string x = "it\'s fine"'
 
     def test_backslash_not_at_end(self):
         result = _strip_inline_comment("int32 x \\\n# still comment?")
@@ -90,6 +93,7 @@ class TestStripInlineComment:
 # ======================================================================
 # _is_valid_field_name
 # ======================================================================
+
 
 class TestIsValidFieldName:
     """Field name validation per ROS 2 interface spec."""
@@ -138,6 +142,7 @@ class TestIsValidFieldName:
 # _is_valid_constant_name
 # ======================================================================
 
+
 class TestIsValidConstantName:
     """Constant name validation (UPPER_CASE)."""
 
@@ -168,6 +173,7 @@ class TestIsValidConstantName:
 # ======================================================================
 # _tokenise_field_line
 # ======================================================================
+
 
 class TestTokeniseFieldLine:
     """Line-level tokeniser — every valid and invalid line form."""
@@ -304,6 +310,7 @@ class TestTokeniseFieldLine:
 # _split_sections
 # ======================================================================
 
+
 class TestSplitSections:
     """Splitting on ``---`` markers for .srv / .action files."""
 
@@ -343,13 +350,15 @@ class TestSplitSections:
 # parse_msg_text
 # ======================================================================
 
+
 class TestParseMsgText:
     """High-level message text parsing."""
 
     def test_simple_fields(self):
         defn = parse_msg_text(
             "int32 x\nfloat64 y\nstring name",
-            package="test", type_name="Simple",
+            package="test",
+            type_name="Simple",
         )
         assert defn.package == "test"
         assert defn.type_name == "Simple"
@@ -361,7 +370,8 @@ class TestParseMsgText:
     def test_constants(self):
         defn = parse_msg_text(
             "int32 FOO=42\nfloat64 PI=3.14",
-            package="test", type_name="Consts",
+            package="test",
+            type_name="Consts",
         )
         assert len(defn.constants) == 2
         assert defn.constants[0].name == "FOO"
@@ -370,7 +380,8 @@ class TestParseMsgText:
     def test_mixed_fields_and_constants(self):
         defn = parse_msg_text(
             "int32 FOO=42\nint32 x\nfloat64 y",
-            package="test", type_name="Mixed",
+            package="test",
+            type_name="Mixed",
         )
         assert len(defn.constants) == 1
         assert len(defn.fields) == 2
@@ -378,14 +389,16 @@ class TestParseMsgText:
     def test_full_line_comments_skipped(self):
         defn = parse_msg_text(
             "# this is a comment\nint32 x\n# another\n",
-            package="test", type_name="C",
+            package="test",
+            type_name="C",
         )
         assert len(defn.fields) == 1
 
     def test_inline_comments_stripped(self):
         defn = parse_msg_text(
             "int32 x  # inline comment",
-            package="test", type_name="C",
+            package="test",
+            type_name="C",
         )
         assert len(defn.fields) == 1
 
@@ -393,17 +406,20 @@ class TestParseMsgText:
         """A line that becomes empty after inline-stripping is skipped."""
         defn = parse_msg_text(
             "int32 x\n  # full comment\nfloat64 y",
-            package="test", type_name="C",
+            package="test",
+            type_name="C",
         )
         assert len(defn.fields) == 2
 
     def test_unparseable_line_raises(self):
         """A truly unparseable line now raises a descriptive ValueError."""
         import pytest
+
         with pytest.raises(ValueError, match="line 1"):
             parse_msg_text(
                 "@#$% not_a_field\nint32 x\n",
-                package="test", type_name="C",
+                package="test",
+                type_name="C",
             )
 
     def test_empty_text(self):
@@ -417,7 +433,10 @@ class TestParseMsgText:
 
     def test_overridden_type_kind(self):
         defn = parse_msg_text(
-            "int32 x", package="pkg", type_name="Foo", type_kind="srv",
+            "int32 x",
+            package="pkg",
+            type_name="Foo",
+            type_kind="srv",
         )
         assert defn.type_kind == "srv"
         assert defn.full_name == "pkg/srv/Foo"
@@ -426,6 +445,7 @@ class TestParseMsgText:
 # ======================================================================
 # parse_srv_file
 # ======================================================================
+
 
 class TestParseSrvFile:
     """Service file parsing (request / response split)."""
@@ -449,7 +469,7 @@ class TestParseSrvFile:
     def test_service_with_constants(self, tmp_path):
         path = tmp_path / "WithConst.srv"
         path.write_text("int32 STATUS_OK=0\nint32 data\n---\nbool result\n")
-        req, resp = parse_srv_file(path, "test")
+        req, _resp = parse_srv_file(path, "test")
         assert len(req.constants) == 1
         assert req.constants[0].name == "STATUS_OK"
 
@@ -472,14 +492,13 @@ class TestParseSrvFile:
 # parse_action_file
 # ======================================================================
 
+
 class TestParseActionFile:
     """Action file parsing (8 sub-types)."""
 
     def test_yields_eight_definitions(self, tmp_path):
         path = tmp_path / "Fibonacci.action"
-        path.write_text(
-            "int32 order\n---\nint32[] sequence\n---\nint32[] sequence\n"
-        )
+        path.write_text("int32 order\n---\nint32[] sequence\n---\nint32[] sequence\n")
         results = parse_action_file(path, "test")
         assert len(results) == 8
 
@@ -531,6 +550,7 @@ class TestParseActionFile:
 # ======================================================================
 # Directory discovery helpers
 # ======================================================================
+
 
 class TestIterMsgFiles:
     def test_yields_sorted_files(self, tmp_path):
@@ -822,7 +842,8 @@ class TestParseMsgTextBoundary:
         """Array fields with defaults are correctly parsed."""
         defn = parse_msg_text(
             "int32[3] arr [1,2,3]\nfloat64[] vals []",
-            package="test", type_name="Arrays",
+            package="test",
+            type_name="Arrays",
         )
         assert len(defn.fields) == 2
         assert defn.fields[0].name == "arr"
@@ -834,7 +855,8 @@ class TestParseMsgTextBoundary:
         """A # inside a quoted default value must survive parsing."""
         defn = parse_msg_text(
             "string desc 'hello # world'",
-            package="test", type_name="WithHash",
+            package="test",
+            type_name="WithHash",
         )
         assert len(defn.fields) == 1
         assert defn.fields[0].default == "'hello # world'"
@@ -844,14 +866,16 @@ class TestParseMsgTextBoundary:
         with pytest.raises(ValueError, match="not a valid field name"):
             parse_msg_text(
                 "float64 café",
-                package="test", type_name="Bad",
+                package="test",
+                type_name="Bad",
             )
 
     def test_preserves_leading_whitespace_inline_comment_after_quote(self):
         """Trailing # comment after a complex quoted string."""
         defn = parse_msg_text(
             'string x = "data"  # end comment',
-            package="test", type_name="C",
+            package="test",
+            type_name="C",
         )
         assert len(defn.fields) == 1
         assert defn.fields[0].default == '"data"'
@@ -860,7 +884,8 @@ class TestParseMsgTextBoundary:
         """Constants and fields using the same type are both parsed."""
         defn = parse_msg_text(
             "int32 SPEED=100\nint32 speed",
-            package="test", type_name="Car",
+            package="test",
+            type_name="Car",
         )
         assert len(defn.constants) == 1
         assert defn.constants[0].name == "SPEED"
@@ -870,7 +895,8 @@ class TestParseMsgTextBoundary:
     def test_only_comments_and_blank_lines(self):
         defn = parse_msg_text(
             "\n# comment\n  \n  # another\n\n",
-            package="test", type_name="Empty",
+            package="test",
+            type_name="Empty",
         )
         assert len(defn.fields) == 0
         assert len(defn.constants) == 0
@@ -898,13 +924,13 @@ class TestParseSrvBoundary:
     def test_constants_in_both_sections(self, tmp_path):
         """Both request and response can have constants."""
         path = tmp_path / "Status.srv"
-        path.write_text("int32 REQ_CODE=1\nint32 data\n---\nint32 RESP_CODE=0\nbool ok\n")
+        path.write_text(
+            "int32 REQ_CODE=1\nint32 data\n---\nint32 RESP_CODE=0\nbool ok\n"
+        )
         req, resp = parse_srv_file(path, "test")
         assert len(req.constants) == 1
         assert len(resp.constants) == 1
         assert resp.constants[0].name == "RESP_CODE"
-
-
 
 
 class TestParseActionBoundary:

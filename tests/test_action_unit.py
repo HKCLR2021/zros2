@@ -1,18 +1,20 @@
-"""Unit tests for :class:`zros2._action.Action` edge cases."""
+"""Unit tests for :class:`zros2.endpoints.Action` edge cases."""
 
-from unittest.mock import MagicMock, patch
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 
-from zros2._action import Action
+from zros2.endpoints import Action
 from zros2.exceptions import ActionInvokeException
+from zros2.types import RosAction
 
 
 class _MockActionType:
     """Minimal action type satisfying the RosAction protocol."""
 
     class Goal:
-        def serialize(self):
+        def serialize(self) -> bytes:
             return b""
 
     class Result:
@@ -23,26 +25,31 @@ class _MockActionType:
 
     class FeedbackMessage:
         @classmethod
-        def deserialize(cls, data):
+        def deserialize(cls, data: bytes):
             return cls()
 
     class SendGoal_Request:
-        def serialize(self):
+        def serialize(self) -> bytes:
             return b""
 
     class SendGoal_Response:
         @classmethod
-        def deserialize(cls, data):
+        def deserialize(cls, data: bytes):
             return cls()
 
     class GetResult_Request:
-        def serialize(self):
+        def serialize(self) -> bytes:
             return b""
 
     class GetResult_Response:
         @classmethod
-        def deserialize(cls, data):
+        def deserialize(cls, data: bytes):
             return cls()
+
+
+_mock_action: type[RosAction[Any, Any, Any, Any, Any, Any, Any, Any]] = cast(
+    type[RosAction[Any, Any, Any, Any, Any, Any, Any, Any]], _MockActionType
+)
 
 
 class TestAction:
@@ -51,7 +58,7 @@ class TestAction:
     def test_init_creates_feedback_subscriber(self):
         """Constructor should set up the feedback subscriber."""
         session = MagicMock()
-        action = Action(session, "test/action", _MockActionType, timeout=3000)
+        action = Action(session, "test/action", _mock_action, timeout=3000)
         assert action._action_name == "test/action"
         assert action._timeout == 3000
         assert action._feedback_subscriber is not None
@@ -72,7 +79,7 @@ class TestAction:
     def test_context_manager(self):
         """Entering and exiting the context manager should not raise."""
         session = MagicMock()
-        action = Action(session, "test/action", _MockActionType, timeout=3000)
+        action = Action(session, "test/action", _mock_action, timeout=3000)
         with action as act:
             assert act is action
         # __exit__ calls unsubscribe on the feedback subscriber
@@ -81,7 +88,7 @@ class TestAction:
     def test_feedback_callback_setter_and_getter(self):
         """Setting and getting the feedback callback should work."""
         session = MagicMock()
-        action = Action(session, "test/action", _MockActionType, timeout=3000)
+        action = Action(session, "test/action", _mock_action, timeout=3000)
 
         assert action.feedback_callback is None
 
@@ -98,7 +105,7 @@ class TestAction:
         # Make get return empty iterator (service unavailable)
         session.get.return_value = iter([])
 
-        action = Action(session, "test/action", _MockActionType, timeout=3000)
+        action = Action(session, "test/action", _mock_action, timeout=3000)
         with pytest.raises(ActionInvokeException):
             action.send_goal()
 
@@ -108,6 +115,6 @@ class TestAction:
         session.is_closed.return_value = False
         session.get.return_value = iter([])
 
-        action = Action(session, "test/action", _MockActionType, timeout=3000)
+        action = Action(session, "test/action", _mock_action, timeout=3000)
         with pytest.raises(ActionInvokeException):
             action.get_result()

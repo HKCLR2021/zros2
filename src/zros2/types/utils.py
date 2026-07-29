@@ -5,19 +5,26 @@ generation time because it reads fields from an arbitrary source object
 whose shape is unknown until runtime.
 
 ``from_dict`` and ``to_dict`` are now generated as hardcoded methods
-on each message class by ``zros2.generator._codegen._msg``.
+on each message class by ``zros2.generator.codegen.message``.
 """
 
-from dataclasses import fields, is_dataclass
-from functools import lru_cache
-from typing import Annotated, Any, TypeVar, Union, cast, get_args, get_origin, get_type_hints
+import types
+from dataclasses import Field, fields, is_dataclass
+from functools import cache
+from typing import (
+    Annotated,
+    Any,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from ._base import RosMessage
 
-T = TypeVar("T", bound=RosMessage)
 
-
-def from_attributes(cls: type[T], obj: Any) -> T:
+def from_attributes[T: RosMessage](cls: type[T], obj: Any) -> T:
     """Create a ROS message instance from an object with matching attributes.
 
     Recursively converts nested dataclasses.  Primitive fields are read
@@ -39,8 +46,7 @@ def from_attributes(cls: type[T], obj: Any) -> T:
     hints = _get_cached_hints(cls)
     for f in _get_cached_fields(cls):
         if not hasattr(obj, f.name):
-            raise KeyError(
-                f"Missing required field '{f.name}' for {cls.__name__}")
+            raise KeyError(f"Missing required field '{f.name}' for {cls.__name__}")
         value = getattr(obj, f.name)
         field_type = hints.get(f.name)
         if field_type is not None:
@@ -54,16 +60,19 @@ def from_attributes(cls: type[T], obj: Any) -> T:
                     kwargs[f.name] = value
                 elif not isinstance(value, (int, float, str, bool, bytes)):
                     kwargs[f.name] = from_attributes(
-                        cast(type[RosMessage], inner), value)
+                        cast(type[RosMessage], inner), value
+                    )
                 else:
                     raise TypeError(
                         f"Expected {_type_name(inner)} for field '{f.name}', "
-                        f"got {type(value).__name__}")
+                        f"got {type(value).__name__}"
+                    )
             else:
                 if not _check_type(value, inner):
                     raise TypeError(
                         f"Expected type {_type_name(inner)} "
-                        f"for field '{f.name}', got {type(value).__name__}")
+                        f"for field '{f.name}', got {type(value).__name__}"
+                    )
                 kwargs[f.name] = value
         else:
             kwargs[f.name] = value
@@ -73,14 +82,14 @@ def from_attributes(cls: type[T], obj: Any) -> T:
 # ── Internal helpers ────────────────────────────────────────
 
 
-@lru_cache(maxsize=None)
+@cache
 def _get_cached_hints(cls: type) -> dict[str, Any]:
     """Cached wrapper around ``typing.get_type_hints``."""
     return get_type_hints(cls)
 
 
-@lru_cache(maxsize=None)
-def _get_cached_fields(cls_or_obj: type) -> tuple:
+@cache
+def _get_cached_fields(cls_or_obj: type) -> tuple[Field[Any], ...]:
     """Cached wrapper around ``dataclasses.fields``."""
     return fields(cls_or_obj)
 
@@ -88,7 +97,7 @@ def _get_cached_fields(cls_or_obj: type) -> tuple:
 def _unwrap_optional(tp: Any) -> Any:
     """Unwrap ``Optional[T]`` / ``T | None`` to ``T``; return other types as-is."""
     origin = get_origin(tp)
-    if origin is Union:
+    if origin is Union or origin is types.UnionType:
         args = [a for a in get_args(tp) if a is not type(None)]
         if len(args) == 1:
             return args[0]

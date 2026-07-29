@@ -1,10 +1,10 @@
-"""Unit tests for :class:`zros2._proxies.ZenohSessionProxy`."""
+"""Unit tests for :class:`zros2._session.ZenohSessionProxy`."""
 
 from unittest.mock import MagicMock
 
 import pytest
 
-from zros2._proxies import ZenohSessionProxy
+from zros2._session import ZenohSessionProxy
 
 
 class TestZenohSessionProxy:

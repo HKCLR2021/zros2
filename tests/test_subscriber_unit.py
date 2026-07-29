@@ -1,11 +1,19 @@
-"""Unit tests for :class:`zros2._subscriber.Subscriber` edge cases."""
+"""Unit tests for :class:`zros2.endpoints.Subscriber` edge cases."""
 
-import logging
+from collections.abc import Callable
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from zros2._subscriber import Subscriber
+from zros2.endpoints import Subscriber
+from zros2.endpoints.subscriber import logger
+from zros2.types import RosMessage
+
+# Fake message types used in tests — they satisfy the type checker at
+# the structural level while remaining cheap to construct at runtime.
+_str_msg: type[RosMessage] = cast(type[RosMessage], str)
+_int_msg: type[RosMessage] = cast(type[RosMessage], int)
 
 
 class TestSubscriber:
@@ -14,14 +22,14 @@ class TestSubscriber:
     def test_repr(self):
         """__repr__ should include topic and type name."""
         session = MagicMock()
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         assert "test/topic" in repr(sub)
         assert "str" in repr(sub)
 
     def test_del_does_not_raise(self):
         """__del__ should not raise even if unsubscribe encounters an error."""
         session = MagicMock()
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         sub._subscriber = MagicMock()
         sub._subscriber.undeclare.side_effect = Exception("boom")
         sub.__del__()  # Should not raise
@@ -30,7 +38,7 @@ class TestSubscriber:
         """Subscribing twice should raise ValueError."""
         session = MagicMock()
         session.is_closed.return_value = False
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         sub.subscribe(lambda msg: None)
         with pytest.raises(ValueError, match="Already subscribed"):
             sub.subscribe(lambda msg: None)
@@ -39,23 +47,24 @@ class TestSubscriber:
         """Subscribing with a closed session should raise RuntimeError."""
         session = MagicMock()
         session.is_closed.return_value = True
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         with pytest.raises(RuntimeError, match="closed"):
             sub.subscribe(lambda msg: None)
 
     def test_unsubscribe_is_idempotent(self):
         """unsubscribe() when not subscribed should not raise."""
         session = MagicMock()
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         sub.unsubscribe()  # Should not raise
 
     def test_unsubscribe_swallows_exception(self):
         """unsubscribe() should catch exceptions from undeclare()."""
         session = MagicMock()
         session.is_closed.return_value = False
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         sub.subscribe(lambda msg: None)
-        sub._subscriber.undeclare.side_effect = RuntimeError("boom")
+        subscriber_mock = cast(MagicMock, sub._subscriber)
+        subscriber_mock.undeclare.side_effect = RuntimeError("boom")
         sub.unsubscribe()  # Should not raise
         assert sub._subscriber is None  # Should be reset in finally
 
@@ -63,7 +72,7 @@ class TestSubscriber:
         """After unsubscribe(), _subscriber should be None."""
         session = MagicMock()
         session.is_closed.return_value = False
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         sub.subscribe(lambda msg: None)
         assert sub._subscriber is not None
         sub.unsubscribe()
@@ -73,7 +82,7 @@ class TestSubscriber:
         """close() should delegate to unsubscribe()."""
         session = MagicMock()
         session.is_closed.return_value = False
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         sub.subscribe(lambda msg: None)
         sub.close()
         assert sub._subscriber is None
@@ -81,20 +90,20 @@ class TestSubscriber:
     def test_context_manager_exit_calls_close(self):
         """Exiting the context manager should call close()."""
         session = MagicMock()
-        with Subscriber(session, "test/topic", str) as sub:
+        with Subscriber(session, "test/topic", _str_msg) as _sub:
             pass
         # close() is called via __exit__
 
     def test_context_manager_enter_returns_self(self):
         """__enter__ should return the subscriber instance."""
         session = MagicMock()
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         assert sub.__enter__() is sub
 
     def test_zombie_callback_does_not_raise(self):
         """Callback after undeclare should not raise."""
         session = MagicMock()
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         cb = sub._make_zenoh_callback(lambda msg: None)
         sample = MagicMock()
         sample.payload = b"test"
@@ -104,13 +113,13 @@ class TestSubscriber:
     def test_callback_handles_deserialize_error(self):
         """Callback should log and swallow deserialization errors."""
         session = MagicMock()
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         sub._subscriber = MagicMock()
         cb = sub._make_zenoh_callback(lambda msg: None)
         sample = MagicMock()
         # str has no .deserialize() — this will raise AttributeError
         sample.payload = b"garbage"
-        with patch.object(logging, "exception") as mock_exc:
+        with patch.object(logger, "exception") as mock_exc:
             cb(sample)
             mock_exc.assert_called_once()
 
@@ -122,13 +131,13 @@ class TestSubscriber:
         mock_msg_type.__name__ = "ExpectedType"
         mock_msg_type.deserialize.return_value = "a string, not ExpectedType"
 
-        sub = Subscriber(session, "test/topic", mock_msg_type)
+        sub = Subscriber(session, "test/topic", cast(type[RosMessage], mock_msg_type))
         sub._subscriber = MagicMock()
         cb = sub._make_zenoh_callback(lambda msg: None)
         sample = MagicMock()
         sample.payload = b"irrelevant"
 
-        with patch.object(logging, "exception") as mock_exc:
+        with patch.object(logger, "exception") as mock_exc:
             cb(sample)
             mock_exc.assert_called_once()
 
@@ -139,40 +148,42 @@ class TestSubscriber:
         mock_msg_type.__name__ = "MyType"
         mock_msg_type.deserialize.return_value = mock_msg_type
 
-        sub = Subscriber(session, "test/topic", mock_msg_type)
+        sub = Subscriber(session, "test/topic", cast(type[RosMessage], mock_msg_type))
         sub._subscriber = MagicMock()
 
         async def async_callback(msg):  # noqa: unused
             pass
 
-        cb = sub._make_zenoh_callback(async_callback)
+        cb = sub._make_zenoh_callback(
+            cast("Callable[[RosMessage], None]", async_callback)
+        )
         sample = MagicMock()
         sample.payload = b"irrelevant"
 
-        with patch.object(logging, "exception") as mock_exc:
+        with patch.object(logger, "exception") as mock_exc:
             cb(sample)
             mock_exc.assert_called_once()
 
-    def test_callback_handles_deserialize_error(self):
+    def test_callback_deserialize_error_logged(self):
         """Callback should log and swallow deserialization errors."""
         session = MagicMock()
-        sub = Subscriber(session, "test/topic", str)
+        sub = Subscriber(session, "test/topic", _str_msg)
         sub._subscriber = MagicMock()
         cb = sub._make_zenoh_callback(lambda msg: None)
         sample = MagicMock()
         sample.payload = b"not-valid-data"
-        with patch.object(logging, "exception") as mock_exc:
+        with patch.object(logger, "exception") as mock_exc:
             cb(sample)  # deserialize of str with invalid data may fail
             mock_exc.assert_called_once()
 
     def test_callback_type_check_fails_logs_error(self):
         """Callback should type-check the deserialized message."""
         session = MagicMock()
-        sub = Subscriber(session, "test/topic", int)  # int type
+        sub = Subscriber(session, "test/topic", _int_msg)
         sub._subscriber = MagicMock()
         cb = sub._make_zenoh_callback(lambda msg: None)
         sample = MagicMock()
         # int.deserialize returns an int, not a str, so isinstance check fails
-        with patch.object(logging, "exception") as mock_exc:
+        with patch.object(logger, "exception") as mock_exc:
             cb(sample)  # Should log but not raise
             mock_exc.assert_called_once()

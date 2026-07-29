@@ -9,24 +9,13 @@ Usage::
         data = msg.serialize()
 """
 
-from typing import ClassVar, Generic, Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
-from ._base import (
-    _ReqT,
-    _ResT,
-    _SGReqT,
-    _SGResT,
-    _GRReqT,
-    _GRResT,
-    _FBMsgT,
-    _GoalT,
-    _ResultT,
-    _FeedbackT,
-)
+from ._base import RosMessage
 
 
 @runtime_checkable
-class RosService(Protocol, Generic[_ReqT, _ResT]):
+class RosService[ReqT: RosMessage, ResT: RosMessage](Protocol):
     """Protocol for any generated ROS 2 service type.
 
     Usage in type hints::
@@ -36,12 +25,21 @@ class RosService(Protocol, Generic[_ReqT, _ResT]):
         def call(svc: RosService[RosMessage, RosMessage]) -> None: ...
     """
 
-    Request: ClassVar[type[_ReqT]]  # type: ignore[valid-type]
-    Response: ClassVar[type[_ResT]]  # type: ignore[valid-type]
+    Request: ClassVar[type[ReqT]]  # type: ignore[valid-type]
+    Response: ClassVar[type[ResT]]  # type: ignore[valid-type]
 
 
 @runtime_checkable
-class RosAction(Protocol, Generic[_SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _GoalT, _ResultT, _FeedbackT]):
+class RosAction[
+    SGReqT: RosMessage,
+    SGResT: RosMessage,
+    GRReqT: RosMessage,
+    GRResT: RosMessage,
+    FBMsgT: RosMessage,
+    GoalT: RosMessage,
+    ResultT: RosMessage,
+    FeedbackT: RosMessage,
+](Protocol):
     """Protocol for any generated ROS 2 action type.
 
     Usage in type hints::
@@ -54,11 +52,39 @@ class RosAction(Protocol, Generic[_SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _
                                      RosMessage, RosMessage]) -> None: ...
     """
 
-    Goal: ClassVar[type[_GoalT]]  # type: ignore[valid-type]
-    Result: ClassVar[type[_ResultT]]  # type: ignore[valid-type]
-    Feedback: ClassVar[type[_FeedbackT]]  # type: ignore[valid-type]
-    FeedbackMessage: ClassVar[type[_FBMsgT]]  # type: ignore[valid-type]
-    SendGoal_Request: ClassVar[type[_SGReqT]]  # type: ignore[valid-type]
-    SendGoal_Response: ClassVar[type[_SGResT]]  # type: ignore[valid-type]
-    GetResult_Request: ClassVar[type[_GRReqT]]  # type: ignore[valid-type]
-    GetResult_Response: ClassVar[type[_GRResT]]  # type: ignore[valid-type]
+    Goal: ClassVar[type[GoalT]]  # type: ignore[valid-type]
+    Result: ClassVar[type[ResultT]]  # type: ignore[valid-type]
+    Feedback: ClassVar[type[FeedbackT]]  # type: ignore[valid-type]
+    FeedbackMessage: ClassVar[type[FBMsgT]]  # type: ignore[valid-type]
+    SendGoal_Request: ClassVar[type[SGReqT]]  # type: ignore[valid-type]
+    SendGoal_Response: ClassVar[type[SGResT]]  # type: ignore[valid-type]
+    GetResult_Request: ClassVar[type[GRReqT]]  # type: ignore[valid-type]
+    GetResult_Response: ClassVar[type[GRResT]]  # type: ignore[valid-type]
+
+
+class SendGoalRequest[GoalT: RosMessage](RosMessage, Protocol):
+    """Protocol for an action ``SendGoal`` request message.
+
+    Every ROS 2 action ``SendGoal`` request has a ``goal_id`` (UUID)
+    and a ``goal`` payload.
+    """
+
+    goal_id: tuple[int, ...]
+    goal: GoalT
+
+
+class GetResultRequest(RosMessage, Protocol):
+    """Protocol for an action ``GetResult`` request message.
+
+    Every ROS 2 action ``GetResult`` request has a ``goal_id`` (UUID).
+    """
+
+    goal_id: tuple[int, ...]
+
+
+__all__ = [
+    "GetResultRequest",
+    "RosAction",
+    "RosService",
+    "SendGoalRequest",
+]

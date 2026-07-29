@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator._type_grammar``.
+"""Component-level tests for ``zros2.generator.parsing.types``.
 
 Tests the Lark-based ROS 2 type expression parser in isolation — every
 ``parse_type()`` code path, every array/sequence/string variant, and all
@@ -8,7 +8,7 @@ edge cases such as malformed input and unexpected tokens.
 import pytest
 from lark import LarkError
 
-from zros2.generator._type_grammar import (
+from zros2.generator.parsing.types import (
     TypeInfo,
     parse_type,
     ROS2_PRIMITIVE_TYPES,

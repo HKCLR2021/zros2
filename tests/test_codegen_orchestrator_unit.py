@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator._codegen._orchestrator``.
+"""Component-level tests for ``zros2.generator.pipeline.generate``.
 
 Tests the generator orchestrator in isolation:
 - ``builtin_msg_dirs`` discovery
@@ -10,27 +10,28 @@ Tests the generator orchestrator in isolation:
 """
 
 import pathlib
-import pytest
 from unittest import mock
 
-from zros2.generator._codegen._orchestrator import (
-    BUILTIN_MSG_DIR,
-    VALID_DISTROS,
-    builtin_msg_dirs,
-    _strip_wrappers,
-    _resolve_full_name,
-    validate_dependencies,
-    collect_all_types,
-    generate_all,
-    write_generated_files,
-)
-from zros2.generator._codegen._msg import GeneratedFile
-from zros2.generator._parser import MsgDefinition, MsgField
+import pytest
 
+from zros2.generator.assets import BUILTIN_MSG_DIR
+from zros2.generator.codegen.message import GeneratedFile
+from zros2.generator.parsing.discovery import (
+    VALID_DISTROS,
+    _resolve_full_name,
+    _strip_wrappers,
+    builtin_msg_dirs,
+    collect_all_types,
+    validate_dependencies,
+)
+from zros2.generator.parsing.models import MsgDefinition, MsgField
+from zros2.generator.pipeline.generate import generate_all
+from zros2.generator.pipeline.writer import write_generated_files
 
 # ======================================================================
 # BUILTIN_MSG_DIR / VALID_DISTROS
 # ======================================================================
+
 
 class TestConstants:
     def test_builtin_msg_dir_exists(self):
@@ -47,6 +48,7 @@ class TestConstants:
 # ======================================================================
 # builtin_msg_dirs
 # ======================================================================
+
 
 class TestBuiltinMsgDirs:
     def test_valid_distro_returns_dirs(self):
@@ -68,7 +70,7 @@ class TestBuiltinMsgDirs:
     def test_missing_builtin_dir(self):
         """When BUILTIN_MSG_DIR doesn't exist, returns empty."""
         with mock.patch(
-            "zros2.generator._codegen._orchestrator.BUILTIN_MSG_DIR",
+            "zros2.generator.parsing.discovery.BUILTIN_MSG_DIR",
             pathlib.Path("/nonexistent"),
         ):
             result = builtin_msg_dirs("humble")
@@ -78,6 +80,7 @@ class TestBuiltinMsgDirs:
 # ======================================================================
 # _strip_wrappers
 # ======================================================================
+
 
 class TestStripWrappers:
     def test_unbounded_array(self):
@@ -115,6 +118,7 @@ class TestStripWrappers:
 # ======================================================================
 # _resolve_full_name
 # ======================================================================
+
 
 class TestResolveFullName:
     def test_primitive_returns_empty(self):
@@ -165,15 +169,20 @@ class TestResolveFullName:
 # validate_dependencies
 # ======================================================================
 
+
 class TestValidateDependencies:
     def test_all_ok(self):
         types = {
             "pkg/msg/A": MsgDefinition(
-                package="pkg", type_name="A", type_kind="msg",
+                package="pkg",
+                type_name="A",
+                type_kind="msg",
                 fields=[MsgField(name="b", type_str="pkg/msg/B")],
             ),
             "pkg/msg/B": MsgDefinition(
-                package="pkg", type_name="B", type_kind="msg",
+                package="pkg",
+                type_name="B",
+                type_kind="msg",
                 fields=[],
             ),
         }
@@ -182,7 +191,9 @@ class TestValidateDependencies:
     def test_missing_dependency_raises(self):
         types = {
             "pkg/msg/A": MsgDefinition(
-                package="pkg", type_name="A", type_kind="msg",
+                package="pkg",
+                type_name="A",
+                type_kind="msg",
                 fields=[MsgField(name="x", type_str="pkg/msg/Missing")],
             ),
         }
@@ -192,7 +203,9 @@ class TestValidateDependencies:
     def test_primitives_not_checked(self):
         types = {
             "pkg/msg/A": MsgDefinition(
-                package="pkg", type_name="A", type_kind="msg",
+                package="pkg",
+                type_name="A",
+                type_kind="msg",
                 fields=[
                     MsgField(name="x", type_str="int32"),
                     MsgField(name="y", type_str="float64[]"),
@@ -205,7 +218,9 @@ class TestValidateDependencies:
     def test_self_reference_not_flagged(self):
         types = {
             "pkg/msg/A": MsgDefinition(
-                package="pkg", type_name="A", type_kind="msg",
+                package="pkg",
+                type_name="A",
+                type_kind="msg",
                 fields=[MsgField(name="self", type_str="pkg/msg/A")],
             ),
         }
@@ -217,7 +232,9 @@ class TestValidateDependencies:
     def test_error_message_contains_details(self):
         types = {
             "pkg/msg/A": MsgDefinition(
-                package="pkg", type_name="A", type_kind="msg",
+                package="pkg",
+                type_name="A",
+                type_kind="msg",
                 fields=[MsgField(name="x", type_str="pkg/msg/Missing")],
             ),
         }
@@ -230,6 +247,7 @@ class TestValidateDependencies:
 # ======================================================================
 # collect_all_types
 # ======================================================================
+
 
 class TestCollectAllTypes:
     def test_collects_msg_files(self, tmp_path):
@@ -281,6 +299,7 @@ class TestCollectAllTypes:
 # generate_all
 # ======================================================================
 
+
 class TestGenerateAll:
     def test_empty_types_produces_registry_and_init(self):
         files = generate_all({}, pathlib.Path("/out"))
@@ -291,7 +310,9 @@ class TestGenerateAll:
     def test_simple_message_generates_files(self):
         types = {
             "pkg/msg/Point": MsgDefinition(
-                package="pkg", type_name="Point", type_kind="msg",
+                package="pkg",
+                type_name="Point",
+                type_kind="msg",
                 fields=[MsgField(name="x", type_str="float64")],
             ),
         }
@@ -300,20 +321,26 @@ class TestGenerateAll:
         # pkg/msg/_point.py, pkg/msg/_point.pyi, _registry.py, root __init__.py
         py_files = [f for f in files if f.path.name.endswith(".py")]
         pyi_files = [f for f in files if f.path.name.endswith(".pyi")]
-        assert len(py_files) >= 4  # _point.py, msg/__init__.py, pkg/__init__.py, root __init__.py
+        assert (
+            len(py_files) >= 4
+        )  # _point.py, msg/__init__.py, pkg/__init__.py, root __init__.py
         assert len(pyi_files) >= 1  # _point.pyi
 
     def test_root_init_has_registry_imports(self):
         types = {
             "pkg/msg/A": MsgDefinition(
-                package="pkg", type_name="A", type_kind="msg",
+                package="pkg",
+                type_name="A",
+                type_kind="msg",
                 fields=[MsgField(name="x", type_str="int32")],
             ),
         }
         files = generate_all(types, pathlib.Path("/out"))
-        root_init = next(f for f in files
-                         if f.path.name == "__init__.py"
-                         and f.path.parent == pathlib.Path("/out"))
+        root_init = next(
+            f
+            for f in files
+            if f.path.name == "__init__.py" and f.path.parent == pathlib.Path("/out")
+        )
         assert "get_type" in root_init.content
         assert "has_type" in root_init.content
         assert "iter_types" in root_init.content
@@ -323,7 +350,9 @@ class TestGenerateAll:
     def test_generated_files_syntax(self):
         types = {
             "pkg/msg/A": MsgDefinition(
-                package="pkg", type_name="A", type_kind="msg",
+                package="pkg",
+                type_name="A",
+                type_kind="msg",
                 fields=[MsgField(name="x", type_str="int32")],
             ),
         }
@@ -335,7 +364,9 @@ class TestGenerateAll:
     def test_root_package_affects_imports(self):
         types = {
             "pkg/msg/A": MsgDefinition(
-                package="pkg", type_name="A", type_kind="msg",
+                package="pkg",
+                type_name="A",
+                type_kind="msg",
                 fields=[MsgField(name="x", type_str="std_msgs/msg/String")],
             ),
         }
@@ -353,9 +384,11 @@ class TestGenerateAll:
     def test_root_init_has_metadata(self):
         types = {}
         files = generate_all(types, pathlib.Path("/out"))
-        root_init = next(f for f in files
-                         if f.path.name == "__init__.py"
-                         and f.path.parent == pathlib.Path("/out"))
+        root_init = next(
+            f
+            for f in files
+            if f.path.name == "__init__.py" and f.path.parent == pathlib.Path("/out")
+        )
         assert "__generated__ = True" in root_init.content
         assert "__source__" not in root_init.content
 
@@ -363,6 +396,7 @@ class TestGenerateAll:
 # ======================================================================
 # write_generated_files
 # ======================================================================
+
 
 class TestWriteGeneratedFiles:
     def test_writes_files_to_disk(self, tmp_path):

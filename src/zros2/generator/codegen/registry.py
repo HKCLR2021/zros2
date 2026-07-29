@@ -42,15 +42,21 @@ import ast
 def _reg_header() -> list[ast.stmt]:
     """Module docstring + imports."""
     return [
-        ast.Expr(value=ast.Constant(
-            value="Runtime type registry — look up message/service/action types by string name.",
-        )),
+        ast.Expr(
+            value=ast.Constant(
+                value="Runtime type registry — look up message/service/action types by string name.",
+            )
+        ),
         ast.ImportFrom(module="typing", names=[ast.alias(name="Any")], level=0),
-        ast.ImportFrom(module="zros2.types", names=[
-            ast.alias(name="ServiceTypes"),
-            ast.alias(name="ActionTypes"),
-            ast.alias(name="RosMessage"),
-        ], level=0),
+        ast.ImportFrom(
+            module="zros2.types",
+            names=[
+                ast.alias(name="ServiceTypes"),
+                ast.alias(name="ActionTypes"),
+                ast.alias(name="RosMessage"),
+            ],
+            level=0,
+        ),
     ]
 
 
@@ -72,44 +78,54 @@ def _reg_message_section() -> list[ast.stmt]:
             value=ast.Dict(keys=[], values=[]),
             simple=1,
         ),
-
         # register(cls, full_name) -> None
         ast.FunctionDef(
             name="register",
             args=ast.arguments(
-                posonlyargs=[], args=[
+                posonlyargs=[],
+                args=[
                     ast.arg(arg="cls", annotation=_type_rosmsg),
                     ast.arg(arg="full_name", annotation=_str),
                 ],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Register a message/service/action class for runtime lookup.",
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Register a message/service/action class for runtime lookup.",
+                    )
+                ),
                 ast.Assign(
-                    targets=[ast.Subscript(
-                        value=ast.Name(id="_TYPES"),
-                        slice=ast.Name(id="full_name"),
-                    )],
+                    targets=[
+                        ast.Subscript(
+                            value=ast.Name(id="_TYPES"),
+                            slice=ast.Name(id="full_name"),
+                        )
+                    ],
                     value=ast.Name(id="cls"),
                 ),
             ],
             decorator_list=[],
             returns=_none,
         ),
-
         # get_type(name) -> type[RosMessage]
         ast.FunctionDef(
             name="get_type",
             args=ast.arguments(
-                posonlyargs=[], args=[ast.arg(arg="name", annotation=_str)],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                posonlyargs=[],
+                args=[ast.arg(arg="name", annotation=_str)],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Look up a type by its fully qualified name.",
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Look up a type by its fully qualified name.",
+                    )
+                ),
                 ast.If(
                     test=ast.UnaryOp(
                         op=ast.Not(),
@@ -119,59 +135,77 @@ def _reg_message_section() -> list[ast.stmt]:
                             comparators=[ast.Name(id="_TYPES")],
                         ),
                     ),
-                    body=[ast.Expr(value=ast.Call(
-                        func=ast.Name(id="_raise_not_found"),
-                        args=[ast.Name(id="name"), ast.Name(id="_TYPES")],
-                        keywords=[],
-                    ))],
+                    body=[
+                        ast.Expr(
+                            value=ast.Call(
+                                func=ast.Name(id="_raise_not_found"),
+                                args=[ast.Name(id="name"), ast.Name(id="_TYPES")],
+                                keywords=[],
+                            )
+                        )
+                    ],
                     orelse=[],
                 ),
-                ast.Return(value=ast.Subscript(
-                    value=ast.Name(id="_TYPES"),
-                    slice=ast.Name(id="name"),
-                )),
+                ast.Return(
+                    value=ast.Subscript(
+                        value=ast.Name(id="_TYPES"),
+                        slice=ast.Name(id="name"),
+                    )
+                ),
             ],
             decorator_list=[],
             returns=_type_rosmsg,
         ),
-
         # has_type(name) -> bool
         ast.FunctionDef(
             name="has_type",
             args=ast.arguments(
-                posonlyargs=[], args=[ast.arg(arg="name", annotation=_str)],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                posonlyargs=[],
+                args=[ast.arg(arg="name", annotation=_str)],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Check whether a type is registered.",
-                )),
-                ast.Return(value=ast.Compare(
-                    left=ast.Name(id="name"),
-                    ops=[ast.In()],
-                    comparators=[ast.Name(id="_TYPES")],
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Check whether a type is registered.",
+                    )
+                ),
+                ast.Return(
+                    value=ast.Compare(
+                        left=ast.Name(id="name"),
+                        ops=[ast.In()],
+                        comparators=[ast.Name(id="_TYPES")],
+                    )
+                ),
             ],
             decorator_list=[],
             returns=ast.Name(id="bool"),
         ),
-
         # iter_types() -> list[str]
         ast.FunctionDef(
             name="iter_types",
             args=ast.arguments(
-                posonlyargs=[], args=[],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                posonlyargs=[],
+                args=[],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Return a sorted list of all registered type names.",
-                )),
-                ast.Return(value=ast.Call(
-                    func=ast.Name(id="sorted"),
-                    args=[ast.Name(id="_TYPES")],
-                    keywords=[],
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Return a sorted list of all registered type names.",
+                    )
+                ),
+                ast.Return(
+                    value=ast.Call(
+                        func=ast.Name(id="sorted"),
+                        args=[ast.Name(id="_TYPES")],
+                        keywords=[],
+                    )
+                ),
             ],
             decorator_list=[],
             returns=ast.Subscript(
@@ -199,44 +233,54 @@ def _reg_service_section() -> list[ast.stmt]:
             value=ast.Dict(keys=[], values=[]),
             simple=1,
         ),
-
         # register_service(svc, full_name) -> None
         ast.FunctionDef(
             name="register_service",
             args=ast.arguments(
-                posonlyargs=[], args=[
+                posonlyargs=[],
+                args=[
                     ast.arg(arg="svc", annotation=ast.Name(id="ServiceTypes")),
                     ast.arg(arg="full_name", annotation=_str),
                 ],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Register a service type container.",
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Register a service type container.",
+                    )
+                ),
                 ast.Assign(
-                    targets=[ast.Subscript(
-                        value=ast.Name(id="_SERVICES"),
-                        slice=ast.Name(id="full_name"),
-                    )],
+                    targets=[
+                        ast.Subscript(
+                            value=ast.Name(id="_SERVICES"),
+                            slice=ast.Name(id="full_name"),
+                        )
+                    ],
                     value=ast.Name(id="svc"),
                 ),
             ],
             decorator_list=[],
             returns=_none,
         ),
-
         # get_service(name) -> ServiceTypes
         ast.FunctionDef(
             name="get_service",
             args=ast.arguments(
-                posonlyargs=[], args=[ast.arg(arg="name", annotation=_str)],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                posonlyargs=[],
+                args=[ast.arg(arg="name", annotation=_str)],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Look up a service type container by its fully qualified name.",
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Look up a service type container by its fully qualified name.",
+                    )
+                ),
                 ast.If(
                     test=ast.UnaryOp(
                         op=ast.Not(),
@@ -246,17 +290,23 @@ def _reg_service_section() -> list[ast.stmt]:
                             comparators=[ast.Name(id="_SERVICES")],
                         ),
                     ),
-                    body=[ast.Expr(value=ast.Call(
-                        func=ast.Name(id="_raise_not_found"),
-                        args=[ast.Name(id="name"), ast.Name(id="_SERVICES")],
-                        keywords=[],
-                    ))],
+                    body=[
+                        ast.Expr(
+                            value=ast.Call(
+                                func=ast.Name(id="_raise_not_found"),
+                                args=[ast.Name(id="name"), ast.Name(id="_SERVICES")],
+                                keywords=[],
+                            )
+                        )
+                    ],
                     orelse=[],
                 ),
-                ast.Return(value=ast.Subscript(
-                    value=ast.Name(id="_SERVICES"),
-                    slice=ast.Name(id="name"),
-                )),
+                ast.Return(
+                    value=ast.Subscript(
+                        value=ast.Name(id="_SERVICES"),
+                        slice=ast.Name(id="name"),
+                    )
+                ),
             ],
             decorator_list=[],
             returns=ast.Name(id="ServiceTypes"),
@@ -281,44 +331,54 @@ def _reg_action_section() -> list[ast.stmt]:
             value=ast.Dict(keys=[], values=[]),
             simple=1,
         ),
-
         # register_action(act, full_name) -> None
         ast.FunctionDef(
             name="register_action",
             args=ast.arguments(
-                posonlyargs=[], args=[
+                posonlyargs=[],
+                args=[
                     ast.arg(arg="act", annotation=ast.Name(id="ActionTypes")),
                     ast.arg(arg="full_name", annotation=_str),
                 ],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Register an action type container.",
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Register an action type container.",
+                    )
+                ),
                 ast.Assign(
-                    targets=[ast.Subscript(
-                        value=ast.Name(id="_ACTIONS"),
-                        slice=ast.Name(id="full_name"),
-                    )],
+                    targets=[
+                        ast.Subscript(
+                            value=ast.Name(id="_ACTIONS"),
+                            slice=ast.Name(id="full_name"),
+                        )
+                    ],
                     value=ast.Name(id="act"),
                 ),
             ],
             decorator_list=[],
             returns=_none,
         ),
-
         # get_action(name) -> ActionTypes
         ast.FunctionDef(
             name="get_action",
             args=ast.arguments(
-                posonlyargs=[], args=[ast.arg(arg="name", annotation=_str)],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                posonlyargs=[],
+                args=[ast.arg(arg="name", annotation=_str)],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Look up an action type container by its fully qualified name.",
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Look up an action type container by its fully qualified name.",
+                    )
+                ),
                 ast.If(
                     test=ast.UnaryOp(
                         op=ast.Not(),
@@ -328,17 +388,23 @@ def _reg_action_section() -> list[ast.stmt]:
                             comparators=[ast.Name(id="_ACTIONS")],
                         ),
                     ),
-                    body=[ast.Expr(value=ast.Call(
-                        func=ast.Name(id="_raise_not_found"),
-                        args=[ast.Name(id="name"), ast.Name(id="_ACTIONS")],
-                        keywords=[],
-                    ))],
+                    body=[
+                        ast.Expr(
+                            value=ast.Call(
+                                func=ast.Name(id="_raise_not_found"),
+                                args=[ast.Name(id="name"), ast.Name(id="_ACTIONS")],
+                                keywords=[],
+                            )
+                        )
+                    ],
                     orelse=[],
                 ),
-                ast.Return(value=ast.Subscript(
-                    value=ast.Name(id="_ACTIONS"),
-                    slice=ast.Name(id="name"),
-                )),
+                ast.Return(
+                    value=ast.Subscript(
+                        value=ast.Name(id="_ACTIONS"),
+                        slice=ast.Name(id="name"),
+                    )
+                ),
             ],
             decorator_list=[],
             returns=ast.Name(id="ActionTypes"),
@@ -355,20 +421,28 @@ def _reg_helper() -> list[ast.stmt]:
         ast.FunctionDef(
             name="_raise_not_found",
             args=ast.arguments(
-                posonlyargs=[], args=[
+                posonlyargs=[],
+                args=[
                     ast.arg(arg="name", annotation=_str),
-                    ast.arg(arg="registry", annotation=ast.BinOp(
-                        left=ast.Name(id="dict"),
-                        op=ast.BitOr(),
-                        right=ast.Constant(value=None),
-                    )),
+                    ast.arg(
+                        arg="registry",
+                        annotation=ast.BinOp(
+                            left=ast.Name(id="dict"),
+                            op=ast.BitOr(),
+                            right=ast.Constant(value=None),
+                        ),
+                    ),
                 ],
-                kwonlyargs=[], kw_defaults=[], defaults=[],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
             ),
             body=[
-                ast.Expr(value=ast.Constant(
-                    value="Raise a ``KeyError`` with a human-readable message.",
-                )),
+                ast.Expr(
+                    value=ast.Constant(
+                        value="Raise a ``KeyError`` with a human-readable message.",
+                    )
+                ),
                 # if registry is None: registry = _TYPES
                 ast.If(
                     test=ast.Compare(
@@ -376,10 +450,12 @@ def _reg_helper() -> list[ast.stmt]:
                         ops=[ast.Is()],
                         comparators=[ast.Constant(value=None)],
                     ),
-                    body=[ast.Assign(
-                        targets=[ast.Name(id="registry")],
-                        value=ast.Name(id="_TYPES"),
-                    )],
+                    body=[
+                        ast.Assign(
+                            targets=[ast.Name(id="registry")],
+                            value=ast.Name(id="_TYPES"),
+                        )
+                    ],
                     orelse=[],
                 ),
                 # available = sorted(registry)
@@ -394,38 +470,43 @@ def _reg_helper() -> list[ast.stmt]:
                 # Build f-string message
                 ast.Assign(
                     targets=[ast.Name(id="msg")],
-                    value=ast.JoinedStr(values=[
-                        ast.Constant(value="Type '"),
-                        ast.FormattedValue(
-                            value=ast.Name(id="name"), conversion=-1),
-                        ast.Constant(value="' is not registered. Available types ("),
-                        ast.FormattedValue(
-                            value=ast.Call(
-                                func=ast.Name(id="len"),
-                                args=[ast.Name(id="available")],
-                                keywords=[],
+                    value=ast.JoinedStr(
+                        values=[
+                            ast.Constant(value="Type '"),
+                            ast.FormattedValue(
+                                value=ast.Name(id="name"), conversion=-1
                             ),
-                            conversion=-1,
-                        ),
-                        ast.Constant(value="): "),
-                        ast.FormattedValue(
-                            value=ast.Call(
-                                func=ast.Name(id="', '.join"),
-                                args=[
-                                    ast.Subscript(
-                                        value=ast.Name(id="available"),
-                                        slice=ast.Slice(
-                                            lower=None,
-                                            upper=ast.Constant(value=10),
-                                            step=None,
+                            ast.Constant(
+                                value="' is not registered. Available types ("
+                            ),
+                            ast.FormattedValue(
+                                value=ast.Call(
+                                    func=ast.Name(id="len"),
+                                    args=[ast.Name(id="available")],
+                                    keywords=[],
+                                ),
+                                conversion=-1,
+                            ),
+                            ast.Constant(value="): "),
+                            ast.FormattedValue(
+                                value=ast.Call(
+                                    func=ast.Name(id="', '.join"),
+                                    args=[
+                                        ast.Subscript(
+                                            value=ast.Name(id="available"),
+                                            slice=ast.Slice(
+                                                lower=None,
+                                                upper=ast.Constant(value=10),
+                                                step=None,
+                                            ),
                                         ),
-                                    ),
-                                ],
-                                keywords=[],
+                                    ],
+                                    keywords=[],
+                                ),
+                                conversion=-1,
                             ),
-                            conversion=-1,
-                        ),
-                    ]),
+                        ]
+                    ),
                 ),
                 # If more than 10 registered names, append "..."
                 ast.If(
@@ -438,11 +519,13 @@ def _reg_helper() -> list[ast.stmt]:
                         ops=[ast.Gt()],
                         comparators=[ast.Constant(value=10)],
                     ),
-                    body=[ast.AugAssign(
-                        target=ast.Name(id="msg"),
-                        op=ast.Add(),
-                        value=ast.Constant(value="..."),
-                    )],
+                    body=[
+                        ast.AugAssign(
+                            target=ast.Name(id="msg"),
+                            op=ast.Add(),
+                            value=ast.Constant(value="..."),
+                        )
+                    ],
                     orelse=[],
                 ),
                 # raise KeyError(msg)
@@ -474,12 +557,14 @@ def _reg_helper() -> list[ast.stmt]:
 # proper ``lineno`` and ``col_offset`` attributes, which are required
 # before ``ast.unparse`` can produce valid source code.
 
-_REGISTRY_AST = ast.Module(
-    body=(_reg_header()
-          + _reg_message_section()
-          + _reg_service_section()
-          + _reg_action_section()
-          + _reg_helper()),
+REGISTRY_AST = ast.Module(
+    body=(
+        _reg_header()
+        + _reg_message_section()
+        + _reg_service_section()
+        + _reg_action_section()
+        + _reg_helper()
+    ),
     type_ignores=[],
 )
-ast.fix_missing_locations(_REGISTRY_AST)
+ast.fix_missing_locations(REGISTRY_AST)

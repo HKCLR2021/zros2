@@ -7,189 +7,155 @@ eliminating all runtime reflection.  Run with::
     pytest benchmarks/benchmarks.py --benchmark-histogram=bench_hist
 """
 
-import ast
-from dataclasses import dataclass, field
-from typing import Any, ClassVar
+import importlib.util
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
 
-from zros2.generator._codegen._msg import generate_message_module
-from zros2.generator._parser import MsgDefinition, MsgField
-
+from zros2.generator.codegen.message import generate_message_module
+from zros2.generator.parsing.models import MsgDefinition, MsgField
 
 # ═══════════════════════════════════════════════════════════════════════
-# Helper: generate a message class via the codegen
+# Generated module loader — uses importlib instead of exec
 # ═══════════════════════════════════════════════════════════════════════
+#
+# Generated source is written to a temporary directory and loaded via
+# importlib.  For types that reference other generated types (cross-
+# references within a shared namespace), the referenced types are pre-
+# populated into the module namespace before execution.
+#
+# All type generation happens inside a ``with TemporaryDirectory``
+# block so the temp files are cleaned up immediately after loading.
+# The loaded modules remain alive in ``sys.modules`` and continue to
+# work — the on-disk files are only needed during the import step.
 
-def _gen(name: str, fields: list[MsgField],
-         root_package: str = "") -> type:
-    """Generate, compile and return a message class with hardcoded methods."""
+_generated_base: Path
+
+
+def _write_and_load(source: str, name: str, ns: dict | None = None) -> type:
+    """Write generated source to a temp file and import it via importlib.
+
+    Args:
+        source: Stripped Python source (only resolvable imports remain).
+        name: The type/class name to extract from the loaded module.
+        ns: Optional shared namespace.  Its entries are injected into the
+            module's ``__dict__`` before execution so that cross-references
+            between generated types resolve without ``exec``.
+
+    Returns:
+        The class defined in the generated module.
+    """
+    mod_name = f"_bench_{name}"
+    mod_file = _generated_base / f"{mod_name}.py"
+    mod_file.write_text(source)
+
+    spec = importlib.util.spec_from_file_location(mod_name, str(mod_file))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to create module spec for {mod_name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
+
+    # Pre-populate so names (e.g. other generated types) resolve in the
+    # module's namespace during class definition and method bodies.
+    if ns is not None:
+        module.__dict__.update(ns)
+
+    spec.loader.exec_module(module)
+
+    cls_ = getattr(module, name)
+    if ns is not None:
+        ns[name] = cls_
+    return cls_
+
+
+def _strip_unresolvable_imports(code: str) -> str:
+    """Remove imports that won't resolve outside a ROS 2 package tree."""
+    kept: list[str] = []
+    for line in code.splitlines():
+        if line.startswith("from ") and not any(
+            line.startswith(f"from {p}")
+            for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections")
+        ):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _gen(name: str, fields: list[MsgField], root_package: str = "") -> type:
+    """Generate, load and return a message class with hardcoded methods."""
     if root_package:
         defn = MsgDefinition(
-            package=root_package, type_name=name,
-            type_kind="msg", fields=fields,
+            package=root_package,
+            type_name=name,
+            type_kind="msg",
+            fields=fields,
         )
     else:
         defn = MsgDefinition(
-            package="bench", type_name=name,
-            type_kind="msg", fields=fields,
+            package="bench",
+            type_name=name,
+            type_kind="msg",
+            fields=fields,
         )
     code = generate_message_module(defn, root_package=root_package)
-
-    # Strip imports that won't resolve outside a full ROS package tree
-    kept: list[str] = []
-    for line in code.splitlines():
-        if line.startswith("from ") and not any(
-            line.startswith(f"from {p}")
-            for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections")
-        ):
-            continue
-        kept.append(line)
-    cleaned = "\n".join(kept)
-
-    ns: dict = {}
-    exec(compile(ast.parse(cleaned), f"<gen_{name}>", "exec"), ns)
-    return ns[name]
+    cleaned = _strip_unresolvable_imports(code)
+    return _write_and_load(cleaned, name)
 
 
-def _gen_pair(base_pkg: str,
-              name_a: str, fields_a: list[MsgField],
-              name_b: str, fields_b: list[MsgField],
-              ) -> tuple[type, type]:
+def _gen_pair(
+    base_pkg: str,
+    name_a: str,
+    fields_a: list[MsgField],
+    name_b: str,
+    fields_b: list[MsgField],
+) -> tuple[type, type]:
     """Generate two classes where the second references the first.
 
-    Execs both in the same namespace so cross-module references resolve.
+    Both modules share a namespace so cross-module references resolve.
     """
     defn_a = MsgDefinition(
-        package=base_pkg, type_name=name_a,
-        type_kind="msg", fields=fields_a,
+        package=base_pkg,
+        type_name=name_a,
+        type_kind="msg",
+        fields=fields_a,
     )
     defn_b = MsgDefinition(
-        package=base_pkg, type_name=name_b,
-        type_kind="msg", fields=fields_b,
+        package=base_pkg,
+        type_name=name_b,
+        type_kind="msg",
+        fields=fields_b,
     )
 
-    def _clean(defn: MsgDefinition) -> str:
-        code = generate_message_module(defn)
-        kept: list[str] = []
-        for line in code.splitlines():
-            if line.startswith("from ") and not any(
-                line.startswith(f"from {p}")
-                for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections")
-            ):
-                continue
-            kept.append(line)
-        return "\n".join(kept)
+    code_a = _strip_unresolvable_imports(generate_message_module(defn_a))
+    code_b = _strip_unresolvable_imports(generate_message_module(defn_b))
 
     ns: dict = {}
-    exec(compile(ast.parse(_clean(defn_a)), f"<gen_{name_a}>", "exec"), ns)
-    exec(compile(ast.parse(_clean(defn_b)), f"<gen_{name_b}>", "exec"), ns)
-    return ns[name_a], ns[name_b]
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Dimension 1 — Data size
-# ═══════════════════════════════════════════════════════════════════════
-
-Msg10B = _gen("Msg10B", [
-    MsgField(name="id", type_str="int32"),
-    MsgField(name="code", type_str="int32"),
-])
-Msg512B = _gen("Msg512B", [
-    MsgField(name="id", type_str="int32"),
-    MsgField(name="data", type_str="string"),
-])
-Msg1KB = _gen("Msg1KB", [
-    MsgField(name="id", type_str="int32"),
-    MsgField(name="data", type_str="string"),
-])
-Msg1MB = _gen("Msg1MB", [
-    MsgField(name="data", type_str="string"),
-])
-
-_PAYLOAD_512B = "x" * 500
-_PAYLOAD_1KB = "x" * 1000
-_PAYLOAD_1MB = "x" * 1_000_000
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Dimension 2 — Field count (flat messages)
-# ═══════════════════════════════════════════════════════════════════════
-
-Fields1 = _gen("Fields1", [MsgField(name="f0", type_str="int32")])
-Fields3 = _gen("Fields3", [
-    MsgField(name="f0", type_str="int32"),
-    MsgField(name="f1", type_str="string"),
-    MsgField(name="f2", type_str="float64"),
-])
-Fields8 = _gen("Fields8", [
-    MsgField(name=f"f{i}", type_str=(
-        "int32" if i % 3 == 0 else
-        "float64" if i % 3 == 1 else
-        "string"
-    )) for i in range(8)
-])
-Fields15 = _gen("Fields15", [
-    MsgField(name=f"f{i}", type_str=(
-        "int32" if i % 3 == 0 else
-        "float64" if i % 3 == 1 else
-        "string"
-    )) for i in range(15)
-])
-
-_FIELDS3_VALUES = {"f0": 42, "f1": "hello", "f2": 3.14}
-_FIELDS8_VALUES = {f"f{i}": (
-    42 if i % 3 == 0 else
-    3.14 if i % 3 == 1 else
-    "hello"
-) for i in range(8)}
-_FIELDS15_VALUES = {f"f{i}": (
-    42 if i % 3 == 0 else
-    3.14 if i % 3 == 1 else
-    "hello"
-) for i in range(15)}
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Dimension 3 — Nesting
-# ═══════════════════════════════════════════════════════════════════════
-#
-# All nested types share a single namespace so cross-references resolve.
-
-_NEST_NS: dict = {}
+    cls_a = _write_and_load(code_a, name_a, ns)
+    cls_b = _write_and_load(code_b, name_b, ns)
+    return cls_a, cls_b
 
 
 def _gen_nest(name: str, fields: list[MsgField]) -> type:
-    defn = MsgDefinition(package="nest", type_name=name, type_kind="msg", fields=fields)
-    code = generate_message_module(defn)
-    kept: list[str] = []
-    for line in code.splitlines():
-        if line.startswith("from ") and not any(
-            line.startswith(f"from {p}")
-            for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections")
-        ):
-            continue
-        kept.append(line)
-    exec(compile(ast.parse("\n".join(kept)), f"<{name}>", "exec"), _NEST_NS)
-    return _NEST_NS[name]
+    defn = MsgDefinition(
+        package="nest",
+        type_name=name,
+        type_kind="msg",
+        fields=fields,
+    )
+    code = _strip_unresolvable_imports(generate_message_module(defn))
+    return _write_and_load(code, name, _NEST_NS)
 
 
-_leaf_fields = [MsgField(name="x", type_str="float64"), MsgField(name="y", type_str="float64"), MsgField(name="label", type_str="string")]
-
-Inner = _gen_nest("Inner", _leaf_fields)
-NestL1 = _gen_nest("NestL1", [MsgField(name="inner", type_str="nest/Inner"), MsgField(name="id", type_str="int32")])
-NestMid = _gen_nest("NestMid", [MsgField(name="inner", type_str="nest/Inner"), MsgField(name="value", type_str="float64")])
-NestDeep = _gen_nest("NestDeep", [MsgField(name="mid", type_str="nest/NestMid"), MsgField(name="tag", type_str="string")])
-_Inner3 = _gen_nest("Inner3", _leaf_fields)
-NestWide = _gen_nest("NestWide", [
-    MsgField(name="left", type_str="nest/Inner3"),
-    MsgField(name="right", type_str="nest/Inner3"),
-    MsgField(name="center", type_str="nest/Inner3"),
-    MsgField(name="id", type_str="int32"),
-])
-_InnerL = _gen_nest("InnerL", _leaf_fields)
-NestList = _gen_nest("NestList", [
-    MsgField(name="items", type_str="sequence<nest/InnerL>"),
-    MsgField(name="id", type_str="int32"),
-])
+def _gen_deep(name: str, fields: list[MsgField], pkg: str = "deep") -> type:
+    defn = MsgDefinition(
+        package=pkg,
+        type_name=name,
+        type_kind="msg",
+        fields=fields,
+    )
+    code = _strip_unresolvable_imports(generate_message_module(defn))
+    return _write_and_load(code, name, _DEEP_NS)
 
 
 def _inner_dict(**overrides: Any) -> dict[str, Any]:
@@ -199,44 +165,367 @@ def _inner_dict(**overrides: Any) -> dict[str, Any]:
 
 
 def _inner_obj(**overrides: Any) -> Any:
-    return Inner(x=overrides.get("x", 1),
-                 y=overrides.get("y", 2.0),
-                 label=overrides.get("label", "pt"))
+    return Inner(
+        x=overrides.get("x", 1),
+        y=overrides.get("y", 2.0),
+        label=overrides.get("label", "pt"),
+    )
 
 
-_NEST_L1_DICT: dict[str, Any] = {"id": 42, "inner": _inner_dict()}
-_NEST_L1_OBJ = NestL1(id=42, inner=_inner_obj())
+def _chain_dict(levels: int, val: int = 1) -> dict[str, Any]:
+    if levels <= 1:
+        return {"val": val}
+    return {"child": _chain_dict(levels - 1, val), "val": val}
 
-_NEST_DEEP_DICT: dict[str, Any] = {
-    "tag": "root",
-    "mid": {"value": 1.5, "inner": _inner_dict()},
-}
-_NEST_DEEP_OBJ = NestDeep(
-    tag="root",
-    mid=NestMid(value=1.5, inner=_inner_obj()),
-)
 
-_NEST_WIDE_DICT: dict[str, Any] = {
-    "id": 7,
-    "left": _inner_dict(x=1),
-    "right": _inner_dict(x=2),
-    "center": _inner_dict(x=3),
-}
-_NEST_WIDE_OBJ = NestWide(
-    id=7,
-    left=_inner_obj(x=1),
-    right=_inner_obj(x=2),
-    center=_inner_obj(x=3),
-)
+def _chain_obj(chain_type: type, levels: int, val: int = 1) -> Any:
+    if levels <= 1:
+        return chain_type(val=val)
+    child_type = _DEEP_NS[chain_type.__annotations__["child"].__name__]
+    return chain_type(child=_chain_obj(child_type, levels - 1, val), val=val)
 
-_NEST_LIST_DICT: dict[str, Any] = {
-    "id": 99,
-    "items": [_inner_dict(x=i) for i in range(5)],
-}
-_NEST_LIST_OBJ = NestList(
-    id=99,
-    items=[_inner_obj() for _ in range(5)],
-)
+
+def _make_chain_types(levels: int) -> tuple[type, ...]:
+    """Return (Leaf, L2, L3, ..., L<levels>)."""
+    types = [_DEEP_LEAF]
+    for i in range(2, levels + 1):
+        prev = types[-1]
+        prev_name = prev.__name__
+        typ = _gen_deep(
+            f"ChainL{i}",
+            [
+                MsgField(name="child", type_str=f"deep/{prev_name}"),
+                MsgField(name="val", type_str="int32"),
+            ],
+        )
+        types.append(typ)
+    return tuple(types)
+
+
+def _list_chain_dict(
+    levels: int, val: int = 1, items_per_level: int = 2
+) -> dict[str, Any]:
+    if levels <= 1:
+        return {"val": val}
+    items = [
+        _list_chain_dict(levels - 1, val + i, items_per_level)
+        for i in range(items_per_level)
+    ]
+    return {"items": items, "val": val}
+
+
+def _list_chain_obj(
+    top_type: type, levels: int, val: int = 1, items_per_level: int = 2
+) -> Any:
+    if levels <= 1:
+        return top_type(val=val)
+    # pycdr2 wraps sequence annotations as Annotated[Sequence[InnerType], ...]
+    annot_items = top_type.__annotations__["items"]
+    inner_type = annot_items.__args__[0].__args__[0]  # Sequence[InnerType] → InnerType
+    inner_type_name = inner_type.__name__
+    inner_cls = _DEEP_NS[inner_type_name]
+    items = [
+        _list_chain_obj(inner_cls, levels - 1, val + i, items_per_level)
+        for i in range(items_per_level)
+    ]
+    return top_type(items=items, val=val)
+
+
+def _make_list_chain_types(levels: int) -> tuple[type, ...]:
+    """Return (Leaf, L2, L3, ..., L<levels>) for list-chain."""
+    types = [_DEEP_LEAF]
+    for i in range(2, levels + 1):
+        prev = types[-1]
+        prev_name = prev.__name__
+        typ = _gen_deep(
+            f"ListChainL{i}",
+            [
+                MsgField(name="items", type_str=f"sequence<deep/{prev_name}>"),
+                MsgField(name="val", type_str="int32"),
+            ],
+        )
+        types.append(typ)
+    return tuple(types)
+
+
+def _mixed_dict(levels: int, val: int = 1, items_per_level: int = 2) -> dict[str, Any]:
+    if levels <= 1:
+        return {"val": val}
+    return {
+        "child": _mixed_dict(levels - 1, val, items_per_level),
+        "items": [{"val": val + i} for i in range(items_per_level)],
+        "val": val,
+    }
+
+
+def _mixed_obj(
+    top_type: type, levels: int, val: int = 1, items_per_level: int = 2
+) -> Any:
+    if levels <= 1:
+        return top_type(val=val)
+    hints = top_type.__annotations__
+    # child is a bare class reference (no Annotated wrapper for nested msgs)
+    inner_child = _DEEP_NS[hints["child"].__name__]
+    # items is Annotated[Sequence[InnerType], ...]
+    inner_item_type = hints["items"].__args__[0].__args__[0]
+    inner_item = _DEEP_NS[inner_item_type.__name__]
+    items = [inner_item(val=val + i) for i in range(items_per_level)]
+    return top_type(
+        child=_mixed_obj(inner_child, levels - 1, val, items_per_level),
+        items=items,
+        val=val,
+    )
+
+
+def _make_mixed_types(levels: int) -> tuple[type, ...]:
+    types = [_DEEP_LEAF]
+    sub_types: list[type] = []
+    for i in range(2, levels + 1):
+        prev = types[-1]
+        prev_name = prev.__name__
+        sub = _gen_deep(f"MixSubL{i}", [MsgField(name="val", type_str="int32")])
+        sub_types.append(sub)
+        typ = _gen_deep(
+            f"MixL{i}",
+            [
+                MsgField(name="child", type_str=f"deep/{prev_name}"),
+                MsgField(name="items", type_str=f"sequence<deep/MixSubL{i}>"),
+                MsgField(name="val", type_str="int32"),
+            ],
+        )
+        types.append(typ)
+    return tuple(types)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Type generation — runs inside a with block so temp files are cleaned up
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Once ``exec_module`` completes, the loaded module lives entirely in
+# memory (``sys.modules``).  Files on disk are no longer needed.
+
+with tempfile.TemporaryDirectory(suffix="_zros2_bench") as _tmp:
+    _generated_base = Path(_tmp)
+    sys.path.insert(0, str(_generated_base))
+
+    # ═══════════════════════════════════════════════════════════════
+    # Dimension 1 — Data size
+    # ═══════════════════════════════════════════════════════════════
+
+    Msg10B = _gen(
+        "Msg10B",
+        [
+            MsgField(name="id", type_str="int32"),
+            MsgField(name="code", type_str="int32"),
+        ],
+    )
+    Msg512B = _gen(
+        "Msg512B",
+        [
+            MsgField(name="id", type_str="int32"),
+            MsgField(name="data", type_str="string"),
+        ],
+    )
+    Msg1KB = _gen(
+        "Msg1KB",
+        [
+            MsgField(name="id", type_str="int32"),
+            MsgField(name="data", type_str="string"),
+        ],
+    )
+    Msg1MB = _gen(
+        "Msg1MB",
+        [
+            MsgField(name="data", type_str="string"),
+        ],
+    )
+
+    _PAYLOAD_512B = "x" * 500
+    _PAYLOAD_1KB = "x" * 1000
+    _PAYLOAD_1MB = "x" * 1_000_000
+
+    # ═══════════════════════════════════════════════════════════════
+    # Dimension 2 — Field count (flat messages)
+    # ═══════════════════════════════════════════════════════════════
+
+    Fields1 = _gen("Fields1", [MsgField(name="f0", type_str="int32")])
+    Fields3 = _gen(
+        "Fields3",
+        [
+            MsgField(name="f0", type_str="int32"),
+            MsgField(name="f1", type_str="string"),
+            MsgField(name="f2", type_str="float64"),
+        ],
+    )
+    Fields8 = _gen(
+        "Fields8",
+        [
+            MsgField(
+                name=f"f{i}",
+                type_str=(
+                    "int32" if i % 3 == 0 else "float64" if i % 3 == 1 else "string"
+                ),
+            )
+            for i in range(8)
+        ],
+    )
+    Fields15 = _gen(
+        "Fields15",
+        [
+            MsgField(
+                name=f"f{i}",
+                type_str=(
+                    "int32" if i % 3 == 0 else "float64" if i % 3 == 1 else "string"
+                ),
+            )
+            for i in range(15)
+        ],
+    )
+
+    _FIELDS3_VALUES = {"f0": 42, "f1": "hello", "f2": 3.14}
+    _FIELDS8_VALUES = {
+        f"f{i}": (42 if i % 3 == 0 else 3.14 if i % 3 == 1 else "hello")
+        for i in range(8)
+    }
+    _FIELDS15_VALUES = {
+        f"f{i}": (42 if i % 3 == 0 else 3.14 if i % 3 == 1 else "hello")
+        for i in range(15)
+    }
+
+    # ═══════════════════════════════════════════════════════════════
+    # Dimension 3 — Nesting
+    # ═══════════════════════════════════════════════════════════════
+    #
+    # All nested types share a single namespace so cross-references resolve.
+
+    _NEST_NS: dict = {}
+
+    _leaf_fields = [
+        MsgField(name="x", type_str="float64"),
+        MsgField(name="y", type_str="float64"),
+        MsgField(name="label", type_str="string"),
+    ]
+
+    Inner = _gen_nest("Inner", _leaf_fields)
+    NestL1 = _gen_nest(
+        "NestL1",
+        [
+            MsgField(name="inner", type_str="nest/Inner"),
+            MsgField(name="id", type_str="int32"),
+        ],
+    )
+    NestMid = _gen_nest(
+        "NestMid",
+        [
+            MsgField(name="inner", type_str="nest/Inner"),
+            MsgField(name="value", type_str="float64"),
+        ],
+    )
+    NestDeep = _gen_nest(
+        "NestDeep",
+        [
+            MsgField(name="mid", type_str="nest/NestMid"),
+            MsgField(name="tag", type_str="string"),
+        ],
+    )
+    _Inner3 = _gen_nest("Inner3", _leaf_fields)
+    NestWide = _gen_nest(
+        "NestWide",
+        [
+            MsgField(name="left", type_str="nest/Inner3"),
+            MsgField(name="right", type_str="nest/Inner3"),
+            MsgField(name="center", type_str="nest/Inner3"),
+            MsgField(name="id", type_str="int32"),
+        ],
+    )
+    _InnerL = _gen_nest("InnerL", _leaf_fields)
+    NestList = _gen_nest(
+        "NestList",
+        [
+            MsgField(name="items", type_str="sequence<nest/InnerL>"),
+            MsgField(name="id", type_str="int32"),
+        ],
+    )
+
+    _NEST_L1_DICT: dict[str, Any] = {"id": 42, "inner": _inner_dict()}
+    _NEST_L1_OBJ = NestL1(id=42, inner=_inner_obj())
+
+    _NEST_DEEP_DICT: dict[str, Any] = {
+        "tag": "root",
+        "mid": {"value": 1.5, "inner": _inner_dict()},
+    }
+    _NEST_DEEP_OBJ = NestDeep(
+        tag="root",
+        mid=NestMid(value=1.5, inner=_inner_obj()),
+    )
+
+    _NEST_WIDE_DICT: dict[str, Any] = {
+        "id": 7,
+        "left": _inner_dict(x=1),
+        "right": _inner_dict(x=2),
+        "center": _inner_dict(x=3),
+    }
+    _NEST_WIDE_OBJ = NestWide(
+        id=7,
+        left=_inner_obj(x=1),
+        right=_inner_obj(x=2),
+        center=_inner_obj(x=3),
+    )
+
+    _NEST_LIST_DICT: dict[str, Any] = {
+        "id": 99,
+        "items": [_inner_dict(x=i) for i in range(5)],
+    }
+    _NEST_LIST_OBJ = NestList(
+        id=99,
+        items=[_inner_obj() for _ in range(5)],
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # Dimension 4 — Deep nesting at scale (dynamic generation)
+    # ═══════════════════════════════════════════════════════════════
+    #
+    # Instead of hand-writing dozens of types for 1/3/8/15 levels,
+    # generate them dynamically via the codegen, sharing a single
+    # namespace so that each level's type references the previous
+    # level's type by name.
+
+    _DEEP_NS: dict = {}
+
+    # Leaf type used by all patterns
+    _DEEP_LEAF = _gen_deep("DeepLeaf", [MsgField(name="val", type_str="int32")])
+
+    # Pattern 1: Chain
+    _CHAIN_TYPES: dict[int, type] = {}
+    _CHAIN_DICTS: dict[int, dict[str, Any]] = {}
+    _CHAIN_OBJS: dict[int, Any] = {}
+    for _depth in (1, 3, 8, 15):
+        _types = _make_chain_types(_depth)
+        _CHAIN_TYPES[_depth] = _types[-1]
+        _CHAIN_DICTS[_depth] = _chain_dict(_depth)
+        _CHAIN_OBJS[_depth] = _chain_obj(_types[-1], _depth)
+
+    # Pattern 2: List chain
+    _LIST_CHAIN_TYPES: dict[int, type] = {}
+    _LIST_CHAIN_DICTS: dict[int, dict[str, Any]] = {}
+    _LIST_CHAIN_OBJS: dict[int, Any] = {}
+    for _depth in (1, 3, 8, 15):
+        _types = _make_list_chain_types(_depth)
+        _LIST_CHAIN_TYPES[_depth] = _types[-1]
+        _LIST_CHAIN_DICTS[_depth] = _list_chain_dict(_depth)
+        _LIST_CHAIN_OBJS[_depth] = _list_chain_obj(_types[-1], _depth)
+
+    # Pattern 3: Mixed chain (object + list per level)
+    _MIXED_TYPES: dict[int, type] = {}
+    _MIXED_DICTS: dict[int, dict[str, Any]] = {}
+    _MIXED_OBJS: dict[int, Any] = {}
+    for _depth in (1, 3, 8, 15):
+        _types = _make_mixed_types(_depth)
+        _MIXED_TYPES[_depth] = _types[-1]
+        _MIXED_DICTS[_depth] = _mixed_dict(_depth)
+        _MIXED_OBJS[_depth] = _mixed_obj(_types[-1], _depth)
+
+# temp dir cleaned up here — all types already loaded in sys.modules
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -245,10 +534,10 @@ _NEST_LIST_OBJ = NestList(
 
 # ── Data-size tests ───────────────────────────────────────────────
 
-class TestSize:
-    """Benchmark across different payload sizes (10 B → 1 MB)."""
 
-    # --- Construction ---
+class TestSize:
+    """Benchmark across different payload sizes (10 B → 1 MB)."""
+
     def test_con_10b(self, benchmark):
         benchmark(Msg10B, id=42, code=1)
 
@@ -261,7 +550,6 @@ class TestSize:
     def test_con_1mb(self, benchmark):
         benchmark(Msg1MB, data=_PAYLOAD_1MB)
 
-    # --- to_dict ---
     def test_tod_10b(self, benchmark):
         benchmark(Msg10B(id=42, code=1).to_dict)
 
@@ -274,7 +562,6 @@ class TestSize:
     def test_tod_1mb(self, benchmark):
         benchmark(Msg1MB(data=_PAYLOAD_1MB).to_dict)
 
-    # --- from_dict ---
     def test_frd_10b(self, benchmark):
         benchmark(Msg10B.from_dict, {"id": 42, "code": 1})
 
@@ -287,7 +574,6 @@ class TestSize:
     def test_frd_1mb(self, benchmark):
         benchmark(Msg1MB.from_dict, {"data": _PAYLOAD_1MB})
 
-    # --- Round-trip ---
     def test_rt_10b(self, benchmark):
         data: dict[str, Any] = {"id": 42, "code": 1}
         benchmark(lambda: Msg10B.from_dict(data).to_dict())
@@ -307,10 +593,10 @@ class TestSize:
 
 # ── Field-count tests ────────────────────────────────────────────
 
+
 class TestFields:
     """Benchmark across flat messages with 1, 3, 8, 15 fields."""
 
-    # --- Construction ---
     def test_con_1f(self, benchmark):
         benchmark(Fields1, f0=42)
 
@@ -323,7 +609,6 @@ class TestFields:
     def test_con_15f(self, benchmark):
         benchmark(Fields15, **_FIELDS15_VALUES)
 
-    # --- to_dict ---
     def test_tod_1f(self, benchmark):
         benchmark(Fields1(f0=42).to_dict)
 
@@ -336,7 +621,6 @@ class TestFields:
     def test_tod_15f(self, benchmark):
         benchmark(Fields15(**_FIELDS15_VALUES).to_dict)
 
-    # --- from_dict ---
     def test_frd_1f(self, benchmark):
         benchmark(Fields1.from_dict, {"f0": 42})
 
@@ -349,7 +633,6 @@ class TestFields:
     def test_frd_15f(self, benchmark):
         benchmark(Fields15.from_dict, dict(_FIELDS15_VALUES))
 
-    # --- Round-trip ---
     def test_rt_1f(self, benchmark):
         data: dict[str, Any] = {"f0": 42}
         benchmark(lambda: Fields1.from_dict(data).to_dict())
@@ -369,28 +652,28 @@ class TestFields:
 
 # ── Nesting tests ────────────────────────────────────────────────
 
+
 class TestNest:
     """Benchmark across nesting patterns: L1, deep, wide, list."""
 
-    # --- Construction ---
     def test_con_l1(self, benchmark):
         benchmark(NestL1, id=42, inner=_inner_obj())
 
     def test_con_deep(self, benchmark):
-        benchmark(NestDeep, tag="root",
-                  mid=NestMid(value=1.5, inner=_inner_obj()))
+        benchmark(NestDeep, tag="root", mid=NestMid(value=1.5, inner=_inner_obj()))
 
     def test_con_wide(self, benchmark):
-        benchmark(NestWide, id=7,
-                  left=_inner_obj(x=1),
-                  right=_inner_obj(x=2),
-                  center=_inner_obj(x=3))
+        benchmark(
+            NestWide,
+            id=7,
+            left=_inner_obj(x=1),
+            right=_inner_obj(x=2),
+            center=_inner_obj(x=3),
+        )
 
     def test_con_list(self, benchmark):
-        benchmark(NestList, id=99,
-                  items=[_inner_obj() for _ in range(5)])
+        benchmark(NestList, id=99, items=[_inner_obj() for _ in range(5)])
 
-    # --- to_dict ---
     def test_tod_l1(self, benchmark):
         benchmark(_NEST_L1_OBJ.to_dict)
 
@@ -403,7 +686,6 @@ class TestNest:
     def test_tod_list(self, benchmark):
         benchmark(_NEST_LIST_OBJ.to_dict)
 
-    # --- from_dict ---
     def test_frd_l1(self, benchmark):
         benchmark(NestL1.from_dict, _NEST_L1_DICT)
 
@@ -416,7 +698,6 @@ class TestNest:
     def test_frd_list(self, benchmark):
         benchmark(NestList.from_dict, _NEST_LIST_DICT)
 
-    # --- Round-trip ---
     def test_rt_l1(self, benchmark):
         data = dict(_NEST_L1_DICT)
         benchmark(lambda: NestL1.from_dict(data).to_dict())
@@ -434,184 +715,8 @@ class TestNest:
         benchmark(lambda: NestList.from_dict(data).to_dict())
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Dimension 4 — Deep nesting at scale (dynamic generation)
-# ═══════════════════════════════════════════════════════════════════════
-#
-# Instead of hand-writing dozens of types for 1/3/8/15 levels, generate
-# them dynamically via the codegen, sharing a single namespace so that
-# each level's type references the previous level's type by name.
+# ── Deep nesting tests ───────────────────────────────────────────
 
-_DEEP_NS: dict = {}
-
-
-def _gen_deep(name: str, fields: list[MsgField], pkg: str = "deep") -> type:
-    defn = MsgDefinition(package=pkg, type_name=name, type_kind="msg", fields=fields)
-    code = generate_message_module(defn)
-    kept: list[str] = []
-    for line in code.splitlines():
-        if line.startswith("from ") and not any(
-            line.startswith(f"from {p}")
-            for p in ("typing", "dataclasses", "pycdr2", "zros2", "collections")
-        ):
-            continue
-        kept.append(line)
-    exec(compile(ast.parse("\n".join(kept)), f"<{name}>", "exec"), _DEEP_NS)
-    return _DEEP_NS[name]
-
-
-# ── Leaf type used by all patterns ────────────────────────────────
-
-_DEEP_LEAF = _gen_deep("DeepLeaf", [MsgField(name="val", type_str="int32")])
-
-
-# ── Pattern 1: Chain ──────────────────────────────────────────────
-
-def _make_chain_types(levels: int) -> tuple[type, ...]:
-    """Return (Leaf, L2, L3, ..., L<levels>)."""
-    types = [_DEEP_LEAF]
-    for i in range(2, levels + 1):
-        prev = types[-1]
-        prev_name = prev.__name__
-        typ = _gen_deep(f"ChainL{i}", [
-            MsgField(name="child", type_str=f"deep/{prev_name}"),
-            MsgField(name="val", type_str="int32"),
-        ])
-        types.append(typ)
-    return tuple(types)
-
-
-def _chain_dict(levels: int, val: int = 1) -> dict[str, Any]:
-    if levels <= 1:
-        return {"val": val}
-    return {"child": _chain_dict(levels - 1, val), "val": val}
-
-
-def _chain_obj(chain_type: type, levels: int, val: int = 1) -> Any:
-    if levels <= 1:
-        return chain_type(val=val)
-    child_type = _DEEP_NS[chain_type.__annotations__["child"].__name__]
-    return chain_type(child=_chain_obj(child_type, levels - 1, val), val=val)
-
-
-_CHAIN_TYPES: dict[int, type] = {}
-_CHAIN_DICTS: dict[int, dict[str, Any]] = {}
-_CHAIN_OBJS: dict[int, Any] = {}
-for depth in (1, 3, 8, 15):
-    types = _make_chain_types(depth)
-    _CHAIN_TYPES[depth] = types[-1]
-    _CHAIN_DICTS[depth] = _chain_dict(depth)
-    _CHAIN_OBJS[depth] = _chain_obj(types[-1], depth)
-
-
-# ── Pattern 2: List chain ─────────────────────────────────────────
-
-def _make_list_chain_types(levels: int) -> tuple[type, ...]:
-    """Return (Leaf, L2, L3, ..., L<levels>) for list-chain."""
-    types = [_DEEP_LEAF]
-    for i in range(2, levels + 1):
-        prev = types[-1]
-        prev_name = prev.__name__
-        typ = _gen_deep(f"ListChainL{i}", [
-            MsgField(name="items", type_str=f"sequence<deep/{prev_name}>"),
-            MsgField(name="val", type_str="int32"),
-        ])
-        types.append(typ)
-    return tuple(types)
-
-
-def _list_chain_dict(levels: int, val: int = 1,
-                     items_per_level: int = 2) -> dict[str, Any]:
-    if levels <= 1:
-        return {"val": val}
-    items = [_list_chain_dict(levels - 1, val + i, items_per_level)
-             for i in range(items_per_level)]
-    return {"items": items, "val": val}
-
-
-def _list_chain_obj(top_type: type, levels: int, val: int = 1,
-                    items_per_level: int = 2) -> Any:
-    if levels <= 1:
-        return top_type(val=val)
-    # pycdr2 wraps sequence annotations as Annotated[Sequence[InnerType], ...]
-    annot_items = top_type.__annotations__["items"]
-    inner_type = annot_items.__args__[0].__args__[0]  # Sequence[InnerType] → InnerType
-    inner_type_name = inner_type.__name__
-    inner_cls = _DEEP_NS[inner_type_name]
-    items = [_list_chain_obj(inner_cls, levels - 1, val + i, items_per_level)
-             for i in range(items_per_level)]
-    return top_type(items=items, val=val)
-
-
-_LIST_CHAIN_TYPES: dict[int, type] = {}
-_LIST_CHAIN_DICTS: dict[int, dict[str, Any]] = {}
-_LIST_CHAIN_OBJS: dict[int, Any] = {}
-for depth in (1, 3, 8, 15):
-    types = _make_list_chain_types(depth)
-    _LIST_CHAIN_TYPES[depth] = types[-1]
-    _LIST_CHAIN_DICTS[depth] = _list_chain_dict(depth)
-    _LIST_CHAIN_OBJS[depth] = _list_chain_obj(types[-1], depth)
-
-
-# ── Pattern 3: Mixed chain (object + list per level) ──────────────
-
-def _make_mixed_types(levels: int) -> tuple[type, ...]:
-    types = [_DEEP_LEAF]
-    sub_types: list[type] = []
-    for i in range(2, levels + 1):
-        prev = types[-1]
-        prev_name = prev.__name__
-        sub = _gen_deep(f"MixSubL{i}", [MsgField(name="val", type_str="int32")])
-        sub_types.append(sub)
-        typ = _gen_deep(f"MixL{i}", [
-            MsgField(name="child", type_str=f"deep/{prev_name}"),
-            MsgField(name="items", type_str=f"sequence<deep/MixSubL{i}>"),
-            MsgField(name="val", type_str="int32"),
-        ])
-        types.append(typ)
-    return tuple(types)
-
-
-def _mixed_dict(levels: int, val: int = 1,
-                items_per_level: int = 2) -> dict[str, Any]:
-    if levels <= 1:
-        return {"val": val}
-    return {
-        "child": _mixed_dict(levels - 1, val, items_per_level),
-        "items": [{"val": val + i} for i in range(items_per_level)],
-        "val": val,
-    }
-
-
-def _mixed_obj(top_type: type, levels: int, val: int = 1,
-               items_per_level: int = 2) -> Any:
-    if levels <= 1:
-        return top_type(val=val)
-    hints = top_type.__annotations__
-    # child is a bare class reference (no Annotated wrapper for nested msgs)
-    inner_child = _DEEP_NS[hints["child"].__name__]
-    # items is Annotated[Sequence[InnerType], ...]
-    inner_item_type = hints["items"].__args__[0].__args__[0]
-    inner_item = _DEEP_NS[inner_item_type.__name__]
-    items = [inner_item(val=val + i) for i in range(items_per_level)]
-    return top_type(
-        child=_mixed_obj(inner_child, levels - 1, val, items_per_level),
-        items=items,
-        val=val,
-    )
-
-
-_MIXED_TYPES: dict[int, type] = {}
-_MIXED_DICTS: dict[int, dict[str, Any]] = {}
-_MIXED_OBJS: dict[int, Any] = {}
-for depth in (1, 3, 8, 15):
-    types = _make_mixed_types(depth)
-    _MIXED_TYPES[depth] = types[-1]
-    _MIXED_DICTS[depth] = _mixed_dict(depth)
-    _MIXED_OBJS[depth] = _mixed_obj(types[-1], depth)
-
-
-# ── Deep nesting benchmark class ──────────────────────────────────
 
 class TestDeepNest:
     """Benchmark across 1/3/8/15 levels for three nesting patterns."""
@@ -619,7 +724,7 @@ class TestDeepNest:
     # ── CHAIN ──────────────────────────────────────────────────────
 
     def test_chain_con_l1(self, benchmark):
-        benchmark(_CHAIN_TYPES[1], val=1)
+        benchmark(_CHAIN_TYPES[1], **_CHAIN_DICTS[1])
 
     def test_chain_con_l3(self, benchmark):
         benchmark(_CHAIN_TYPES[3], **_CHAIN_DICTS[3])
@@ -655,21 +760,25 @@ class TestDeepNest:
         benchmark(_CHAIN_TYPES[15].from_dict, _CHAIN_DICTS[15])
 
     def test_chain_rt_l1(self, benchmark):
-        benchmark(lambda: _CHAIN_TYPES[1].from_dict(_CHAIN_DICTS[1]).to_dict())
+        data = dict(_CHAIN_DICTS[1])
+        benchmark(lambda: _CHAIN_TYPES[1].from_dict(data).to_dict())
 
     def test_chain_rt_l3(self, benchmark):
-        benchmark(lambda: _CHAIN_TYPES[3].from_dict(_CHAIN_DICTS[3]).to_dict())
+        data = dict(_CHAIN_DICTS[3])
+        benchmark(lambda: _CHAIN_TYPES[3].from_dict(data).to_dict())
 
     def test_chain_rt_l8(self, benchmark):
-        benchmark(lambda: _CHAIN_TYPES[8].from_dict(_CHAIN_DICTS[8]).to_dict())
+        data = dict(_CHAIN_DICTS[8])
+        benchmark(lambda: _CHAIN_TYPES[8].from_dict(data).to_dict())
 
     def test_chain_rt_l15(self, benchmark):
-        benchmark(lambda: _CHAIN_TYPES[15].from_dict(_CHAIN_DICTS[15]).to_dict())
+        data = dict(_CHAIN_DICTS[15])
+        benchmark(lambda: _CHAIN_TYPES[15].from_dict(data).to_dict())
 
-    # ── LIST ───────────────────────────────────────────────────────
+    # ── LIST CHAIN ─────────────────────────────────────────────────
 
     def test_list_con_l1(self, benchmark):
-        benchmark(_LIST_CHAIN_TYPES[1], val=1)
+        benchmark(_LIST_CHAIN_TYPES[1], **_LIST_CHAIN_DICTS[1])
 
     def test_list_con_l3(self, benchmark):
         benchmark(_LIST_CHAIN_TYPES[3], **_LIST_CHAIN_DICTS[3])
@@ -705,21 +814,25 @@ class TestDeepNest:
         benchmark(_LIST_CHAIN_TYPES[15].from_dict, _LIST_CHAIN_DICTS[15])
 
     def test_list_rt_l1(self, benchmark):
-        benchmark(lambda: _LIST_CHAIN_TYPES[1].from_dict(_LIST_CHAIN_DICTS[1]).to_dict())
+        data = dict(_LIST_CHAIN_DICTS[1])
+        benchmark(lambda: _LIST_CHAIN_TYPES[1].from_dict(data).to_dict())
 
     def test_list_rt_l3(self, benchmark):
-        benchmark(lambda: _LIST_CHAIN_TYPES[3].from_dict(_LIST_CHAIN_DICTS[3]).to_dict())
+        data = dict(_LIST_CHAIN_DICTS[3])
+        benchmark(lambda: _LIST_CHAIN_TYPES[3].from_dict(data).to_dict())
 
     def test_list_rt_l8(self, benchmark):
-        benchmark(lambda: _LIST_CHAIN_TYPES[8].from_dict(_LIST_CHAIN_DICTS[8]).to_dict())
+        data = dict(_LIST_CHAIN_DICTS[8])
+        benchmark(lambda: _LIST_CHAIN_TYPES[8].from_dict(data).to_dict())
 
     def test_list_rt_l15(self, benchmark):
-        benchmark(lambda: _LIST_CHAIN_TYPES[15].from_dict(_LIST_CHAIN_DICTS[15]).to_dict())
+        data = dict(_LIST_CHAIN_DICTS[15])
+        benchmark(lambda: _LIST_CHAIN_TYPES[15].from_dict(data).to_dict())
 
     # ── MIXED ──────────────────────────────────────────────────────
 
     def test_mix_con_l1(self, benchmark):
-        benchmark(_MIXED_TYPES[1], val=1)
+        benchmark(_MIXED_TYPES[1], **_MIXED_DICTS[1])
 
     def test_mix_con_l3(self, benchmark):
         benchmark(_MIXED_TYPES[3], **_MIXED_DICTS[3])
@@ -755,13 +868,17 @@ class TestDeepNest:
         benchmark(_MIXED_TYPES[15].from_dict, _MIXED_DICTS[15])
 
     def test_mix_rt_l1(self, benchmark):
-        benchmark(lambda: _MIXED_TYPES[1].from_dict(_MIXED_DICTS[1]).to_dict())
+        data = dict(_MIXED_DICTS[1])
+        benchmark(lambda: _MIXED_TYPES[1].from_dict(data).to_dict())
 
     def test_mix_rt_l3(self, benchmark):
-        benchmark(lambda: _MIXED_TYPES[3].from_dict(_MIXED_DICTS[3]).to_dict())
+        data = dict(_MIXED_DICTS[3])
+        benchmark(lambda: _MIXED_TYPES[3].from_dict(data).to_dict())
 
     def test_mix_rt_l8(self, benchmark):
-        benchmark(lambda: _MIXED_TYPES[8].from_dict(_MIXED_DICTS[8]).to_dict())
+        data = dict(_MIXED_DICTS[8])
+        benchmark(lambda: _MIXED_TYPES[8].from_dict(data).to_dict())
 
     def test_mix_rt_l15(self, benchmark):
-        benchmark(lambda: _MIXED_TYPES[15].from_dict(_MIXED_DICTS[15]).to_dict())
+        data = dict(_MIXED_DICTS[15])
+        benchmark(lambda: _MIXED_TYPES[15].from_dict(data).to_dict())

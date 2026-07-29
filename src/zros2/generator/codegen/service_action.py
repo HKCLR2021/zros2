@@ -54,13 +54,19 @@ path can inject the appropriate variant of the wrapper class (with or without
 default-value assignments).
 """
 
+# pyright: ignore[reportUnusedFunction]
+
 import ast
 import pathlib
-from .._parser import MsgDefinition
-from .._utilities import _generated_metadata_stmts, _header_comment, _to_snake_case
-from ._msg import GeneratedFile, _registry_import, generate_message_module
-from ._pyi import generate_stub_module
 
+from ..parsing.models import MsgDefinition
+from ..semantics.utilities import (
+    generated_metadata_stmts,
+    header_comment,
+    to_snake_case,
+)
+from .message import GeneratedFile, generate_message_module, registry_import
+from .stubs import generate_stub_module
 
 # ---------------------------------------------------------------------------
 # Suffix constants
@@ -70,14 +76,14 @@ from ._pyi import generate_stub_module
 # look for a "leader" type (e.g. ``Foo_Request`` for services) and then
 # validate that every suffix in the corresponding tuple exists.
 #
-# ``_SRV_SUFFIXES`` — every service has exactly two sub-types.
-# ``_ACTION_SUFFIXES`` — every action has eight sub-types:
+# ``SRV_SUFFIXES`` — every service has exactly two sub-types.
+# ``ACTION_SUFFIXES`` — every action has eight sub-types:
 #   Goal, Result, Feedback, FeedbackMessage for the goal/result/feedback
 #   message types, plus SendGoal_Request/Response and GetResult_Request/Response
 #   for the two internal service pairs that ROS 2 actions are built on.
 
-_SRV_SUFFIXES = ("_Request", "_Response")
-_ACTION_SUFFIXES = (
+SRV_SUFFIXES = ("_Request", "_Response")
+ACTION_SUFFIXES = (
     "_Goal",
     "_Result",
     "_Feedback",
@@ -94,10 +100,10 @@ _ACTION_SUFFIXES = (
 # ---------------------------------------------------------------------------
 
 
-def _is_local_import(stmt: ast.stmt, local_names: set[str]) -> bool:
+def is_local_import(stmt: ast.stmt, local_names: set[str]) -> bool:
     """Check if an ``ImportFrom`` targets a type defined in the same merged module.
 
-    When ``_merge_type_modules`` combines several sub-types into one file,
+    ``merge_type_modules`` combines several sub-types into one file,
     the per-type generator may emit an import like::
 
         from _foo import Foo_Request
@@ -125,8 +131,9 @@ def _is_local_import(stmt: ast.stmt, local_names: set[str]) -> bool:
     if not isinstance(stmt, ast.ImportFrom) or not stmt.names:
         return False
     name = stmt.names[0]
-    return (name.name.lstrip("_") in local_names
-            or (name.asname is not None and name.asname in local_names))
+    return name.name.lstrip("_") in local_names or (
+        name.asname is not None and name.asname in local_names
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +141,7 @@ def _is_local_import(stmt: ast.stmt, local_names: set[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _merge_type_modules(
+def merge_type_modules(
     defns: list[MsgDefinition],
     extra_py_stmts: list[ast.stmt],
     extra_pyi_stmts: list[ast.stmt],
@@ -161,7 +168,7 @@ def _merge_type_modules(
     sub-type contains an import targeting another sub-type in the same set,
     that import is a self-reference within the merged file and must be dropped
     — the target class is already defined in the same module.  Both
-    ``_is_local_import`` and the ``_``-stripping in this check handle the
+    ``is_local_import`` and the ``_``-stripping in this check handle the
     convention where private helpers may be named ``_Foo_*`` while the public
     name is ``Foo_*``.
 
@@ -215,7 +222,7 @@ def _merge_type_modules(
     5. ``post_body_stmts`` (registration call).
 
     Returns:
-        ``(py_content, pyi_content)`` — each prefixed with ``_header_comment()``.
+        ``(py_content, pyi_content)`` — each prefixed with ``header_comment()``.
     """
 
     # Derive the set of public type names being merged (e.g. "Foo_Request").
@@ -239,7 +246,7 @@ def _merge_type_modules(
         for stmt in module.body:
             if isinstance(stmt, ast.ImportFrom):
                 # Drop self-referencing imports (circular in a merged file).
-                if _is_local_import(stmt, local_names):
+                if is_local_import(stmt, local_names):
                     continue
                 # Deduplicate: merge new names into an existing ImportFrom
                 # for the same module instead of adding a second statement.
@@ -260,9 +267,12 @@ def _merge_type_modules(
             elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
                 # Strip per-sub-type docstrings; the merged file has its own.
                 continue
-            elif (isinstance(stmt, ast.Assign) and stmt.targets
-                  and isinstance(stmt.targets[0], ast.Name)
-                  and stmt.targets[0].id in _META_NAMES):
+            elif (
+                isinstance(stmt, ast.Assign)
+                and stmt.targets
+                and isinstance(stmt.targets[0], ast.Name)
+                and stmt.targets[0].id in _META_NAMES
+            ):
                 # Strip per-sub-type metadata; the merger re-adds it.
                 continue
             else:
@@ -288,25 +298,28 @@ def _merge_type_modules(
         # Non-ImportFrom/Import statements are collected separately below.
 
     # Non-import extras (wrapper class, etc.) go after the merged body.
-    extra_body = [s for s in extra_py_stmts
-                  if not isinstance(s, (ast.ImportFrom, ast.Import))]
+    extra_body = [
+        s for s in extra_py_stmts if not isinstance(s, (ast.ImportFrom, ast.Import))
+    ]
 
     # ── Module-level metadata (inserted after imports) ──────────────────
-    meta_stmts = _generated_metadata_stmts(source)
+    meta_stmts = generated_metadata_stmts(source)
 
     # Assemble the final .py AST.
     py_ast = ast.Module(
-        body=([ast.Expr(value=ast.Constant(value=module_doc))]
-              + list(py_imports.values())
-              + meta_stmts
-              + py_body
-              + extra_body
-              + (post_body_stmts or [])),
+        body=(
+            [ast.Expr(value=ast.Constant(value=module_doc))]
+            + list(py_imports.values())
+            + meta_stmts
+            + py_body
+            + extra_body
+            + (post_body_stmts or [])
+        ),
         type_ignores=[],
     )
     ast.fix_missing_locations(py_ast)
     py_body_str = ast.unparse(py_ast)
-    py_content = _header_comment(py_body_str, distro=distro) + py_body_str
+    py_content = header_comment(py_body_str, distro=distro) + py_body_str
 
     # ------------------------------------------------------------------
     # Stub .pyi path (same logic as .py, using stub generator)
@@ -319,7 +332,7 @@ def _merge_type_modules(
         module = ast.parse(generate_stub_module(defn, root_package, distro=distro))
         for stmt in module.body:
             if isinstance(stmt, ast.ImportFrom):
-                if _is_local_import(stmt, local_names):
+                if is_local_import(stmt, local_names):
                     continue
                 key = f"import_from:{stmt.module}"
                 if key in pyi_imports:
@@ -335,9 +348,12 @@ def _merge_type_modules(
                 pyi_imports[ast.unparse(stmt)] = stmt
             elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
                 continue
-            elif (isinstance(stmt, ast.Assign) and stmt.targets
-                  and isinstance(stmt.targets[0], ast.Name)
-                  and stmt.targets[0].id in _META_NAMES):
+            elif (
+                isinstance(stmt, ast.Assign)
+                and stmt.targets
+                and isinstance(stmt.targets[0], ast.Name)
+                and stmt.targets[0].id in _META_NAMES
+            ):
                 # Strip per-sub-type metadata; the merger re-adds it.
                 continue
             else:
@@ -363,14 +379,18 @@ def _merge_type_modules(
             pyi_extra_body.append(stmt)
 
     pyi_ast = ast.Module(
-        body=([ast.Expr(value=ast.Constant(value=f"Stub for {module_doc}."))]
-              + list(pyi_imports.values())
-              + meta_stmts + pyi_body + pyi_extra_body),
+        body=(
+            [ast.Expr(value=ast.Constant(value=f"Stub for {module_doc}."))]
+            + list(pyi_imports.values())
+            + meta_stmts
+            + pyi_body
+            + pyi_extra_body
+        ),
         type_ignores=[],
     )
     ast.fix_missing_locations(pyi_ast)
     pyi_body_str = ast.unparse(pyi_ast)
-    pyi_content = _header_comment(pyi_body_str, distro=distro) + pyi_body_str
+    pyi_content = header_comment(pyi_body_str, distro=distro) + pyi_body_str
 
     return py_content, pyi_content
 
@@ -380,7 +400,7 @@ def _merge_type_modules(
 # ---------------------------------------------------------------------------
 
 
-def _wrapper_class_ast(
+def wrapper_class_ast(
     base: str,
     attr_names: list[str],
     type_class_names: list[str],
@@ -428,12 +448,14 @@ def _wrapper_class_ast(
     """
     body: list[ast.stmt] = []
     if full_name:
-        body.append(ast.AnnAssign(
-            target=ast.Name(id="__ros_name__"),
-            annotation=ast.Name(id="str"),
-            value=ast.Constant(value=full_name),
-            simple=1,
-        ))
+        body.append(
+            ast.AnnAssign(
+                target=ast.Name(id="__ros_name__"),
+                annotation=ast.Name(id="str"),
+                value=ast.Constant(value=full_name),
+                simple=1,
+            )
+        )
     for attr, cls_name in zip(attr_names, type_class_names):
         ann = ast.Subscript(
             value=ast.Name(id="ClassVar"),
@@ -451,8 +473,11 @@ def _wrapper_class_ast(
         body.append(ann_assign)
 
     return ast.ClassDef(
-        name=base, bases=[], keywords=[],
-        body=body, decorator_list=[],
+        name=base,
+        bases=[],
+        keywords=[],
+        body=body,
+        decorator_list=[],
     )
 
 
@@ -461,7 +486,7 @@ def _wrapper_class_ast(
 # ---------------------------------------------------------------------------
 
 
-def _generate_service_wrappers(
+def generate_service_wrappers(
     sub_dir: pathlib.Path,
     defn_by_name: dict[str, MsgDefinition],
     type_names: list[str],
@@ -505,7 +530,7 @@ def _generate_service_wrappers(
         List of base names for which wrappers were generated (e.g.
         ``["Foo", "Bar"]``).
     """
-    ri = _registry_import(root_package)
+    ri = registry_import(root_package)
     names_set = set(type_names)
     wrappers: list[str] = []
     for tn in type_names:
@@ -517,7 +542,7 @@ def _generate_service_wrappers(
             continue
 
         full_name = f"{package}/srv/{base}"
-        snake = _to_snake_case(base)
+        snake = to_snake_case(base)
         req_defn = defn_by_name[f"{base}_Request"]
         resp_defn = defn_by_name[f"{base}_Response"]
 
@@ -525,8 +550,11 @@ def _generate_service_wrappers(
         type_class_names = [f"{base}_{n}" for n in attr_names]
 
         # Build the runtime wrapper class with default-value assignments.
-        wrapper_cls = _wrapper_class_ast(
-            base, attr_names, type_class_names, has_defaults=True,
+        wrapper_cls = wrapper_class_ast(
+            base,
+            attr_names,
+            type_class_names,
+            has_defaults=True,
             full_name=full_name,
         )
         classvar_import = ast.ImportFrom(
@@ -541,32 +569,41 @@ def _generate_service_wrappers(
         )
         reg_import = ast.ImportFrom(
             module=ri,
-            names=[ast.alias(name="register_service",
-                            asname="_register_service")],
+            names=[ast.alias(name="register_service", asname="_register_service")],
             level=0,
         )
-        reg_call = ast.Expr(value=ast.Call(
-            func=ast.Name(id="_register_service"),
-            args=[
-                ast.Call(func=ast.Name(id="ServiceTypes"), args=[],
-                         keywords=[
-                             ast.keyword(arg="Request",
-                                         value=ast.Name(id=type_class_names[0])),
-                             ast.keyword(arg="Response",
-                                         value=ast.Name(id=type_class_names[1])),
-                         ]),
-                ast.Constant(value=full_name),
-            ],
-            keywords=[],
-        ))
+        reg_call = ast.Expr(
+            value=ast.Call(
+                func=ast.Name(id="_register_service"),
+                args=[
+                    ast.Call(
+                        func=ast.Name(id="ServiceTypes"),
+                        args=[],
+                        keywords=[
+                            ast.keyword(
+                                arg="Request", value=ast.Name(id=type_class_names[0])
+                            ),
+                            ast.keyword(
+                                arg="Response", value=ast.Name(id=type_class_names[1])
+                            ),
+                        ],
+                    ),
+                    ast.Constant(value=full_name),
+                ],
+                keywords=[],
+            )
+        )
 
-        content, stub = _merge_type_modules(
+        content, stub = merge_type_modules(
             [req_defn, resp_defn],
             extra_py_stmts=[wrapper_cls, classvar_import, types_import],
             extra_pyi_stmts=[
                 classvar_import,
-                _wrapper_class_ast(
-                    base, attr_names, type_class_names, has_defaults=False,
+                wrapper_class_ast(
+                    base,
+                    attr_names,
+                    type_class_names,
+                    has_defaults=False,
                     full_name=full_name,
                 ),
             ],
@@ -587,7 +624,7 @@ def _generate_service_wrappers(
 # ---------------------------------------------------------------------------
 
 
-def _generate_action_wrappers(
+def generate_action_wrappers(
     sub_dir: pathlib.Path,
     defn_by_name: dict[str, MsgDefinition],
     type_names: list[str],
@@ -601,7 +638,7 @@ def _generate_action_wrappers(
     **Pair-finding logic**
     The flat list of all generated type names is scanned for entries ending
     in ``_SendGoal_Request`` (the "leader" suffix for action families).
-    For each candidate, **all eight** ``_ACTION_SUFFIXES`` are checked against
+    For each candidate, **all eight** ``ACTION_SUFFIXES`` are checked against
     ``names_set``.  If every suffix exists, a wrapper module is emitted; if
     any suffix is missing the candidate is silently skipped.  This guards
     against emitting a broken module when the IDL definitions are incomplete.
@@ -643,7 +680,7 @@ def _generate_action_wrappers(
         List of base names for which wrappers were generated (e.g.
         ``["Foo", "Bar"]``).
     """
-    ri = _registry_import(root_package)
+    ri = registry_import(root_package)
     names_set = set(type_names)
     wrappers: list[str] = []
     for tn in type_names:
@@ -652,22 +689,25 @@ def _generate_action_wrappers(
         base = tn[: -len("_SendGoal_Request")]
         # Validate that every expected action sub-type exists before
         # generating; skip silently if any are missing.
-        if not all(f"{base}{s}" in names_set for s in _ACTION_SUFFIXES):
+        if not all(f"{base}{s}" in names_set for s in ACTION_SUFFIXES):
             continue
 
         full_name = f"{package}/action/{base}"
-        snake = _to_snake_case(base)
+        snake = to_snake_case(base)
 
-        # Collect all 8 definitions in the canonical order from _ACTION_SUFFIXES.
-        orig_defns = [defn_by_name[f"{base}{s}"] for s in _ACTION_SUFFIXES]
+        # Collect all 8 definitions in the canonical order from ACTION_SUFFIXES.
+        orig_defns = [defn_by_name[f"{base}{s}"] for s in ACTION_SUFFIXES]
         # Strip leading underscore for public attribute names.
         # "_Goal" -> "Goal", "_SendGoal_Request" -> "SendGoal_Request", etc.
-        attr_names = [s.lstrip("_") for s in _ACTION_SUFFIXES]
+        attr_names = [s.lstrip("_") for s in ACTION_SUFFIXES]
         type_class_names = [f"{base}_{n}" for n in attr_names]
 
         # Build the runtime wrapper class with default-value assignments.
-        wrapper_cls = _wrapper_class_ast(
-            base, attr_names, type_class_names, has_defaults=True,
+        wrapper_cls = wrapper_class_ast(
+            base,
+            attr_names,
+            type_class_names,
+            has_defaults=True,
             full_name=full_name,
         )
         classvar_import = ast.ImportFrom(
@@ -682,8 +722,7 @@ def _generate_action_wrappers(
         )
         reg_import = ast.ImportFrom(
             module=ri,
-            names=[ast.alias(name="register_action",
-                            asname="_register_action")],
+            names=[ast.alias(name="register_action", asname="_register_action")],
             level=0,
         )
         # Build a keyword argument for each sub-type attribute.
@@ -691,25 +730,31 @@ def _generate_action_wrappers(
             ast.keyword(arg=name, value=ast.Name(id=cls_name))
             for name, cls_name in zip(attr_names, type_class_names)
         ]
-        reg_call = ast.Expr(value=ast.Call(
-            func=ast.Name(id="_register_action"),
-            args=[
-                ast.Call(
-                    func=ast.Name(id="ActionTypes"),
-                    args=[], keywords=reg_keywords,
-                ),
-                ast.Constant(value=full_name),
-            ],
-            keywords=[],
-        ))
+        reg_call = ast.Expr(
+            value=ast.Call(
+                func=ast.Name(id="_register_action"),
+                args=[
+                    ast.Call(
+                        func=ast.Name(id="ActionTypes"),
+                        args=[],
+                        keywords=reg_keywords,
+                    ),
+                    ast.Constant(value=full_name),
+                ],
+                keywords=[],
+            )
+        )
 
-        content, stub = _merge_type_modules(
+        content, stub = merge_type_modules(
             orig_defns,
             extra_py_stmts=[wrapper_cls, classvar_import, types_import],
             extra_pyi_stmts=[
                 classvar_import,
-                _wrapper_class_ast(
-                    base, attr_names, type_class_names, has_defaults=False,
+                wrapper_class_ast(
+                    base,
+                    attr_names,
+                    type_class_names,
+                    has_defaults=False,
                     full_name=full_name,
                 ),
             ],

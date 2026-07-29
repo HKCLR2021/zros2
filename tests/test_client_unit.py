@@ -1,11 +1,8 @@
 """Unit tests for :class:`zros2._client.ZRosClient` error paths."""
 
 import os
-import tempfile
 
 import pytest
-
-from zros2.exceptions import ZRos2Exception
 
 
 class TestZRosClientInit:
@@ -27,22 +24,21 @@ class TestZRosClientInit:
 
     def test_init_with_config_file(self):
         """Passing a valid config file path should succeed."""
-        import tempfile
         import json
+        import tempfile
 
         config_data = {
             "mode": "peer",
             "scouting": {"multicast": {"enabled": False}},
             "listen": {"endpoints": ["tcp/127.0.0.1:0"]},
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json5", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json5", delete=False) as f:
             json.dump(config_data, f)
             tmp_path = f.name
 
         try:
             from zros2 import ZRosClient
+
             client = ZRosClient(tmp_path)
             try:
                 assert client.session is not None
