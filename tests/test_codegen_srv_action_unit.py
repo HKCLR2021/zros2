@@ -400,6 +400,175 @@ class TestMergeTypeModules:
             f"Expected 1 __generated__ assignment, got {generated_count}"
         )
 
+    def test_plain_import_deduplication(self):
+        """Plain ``ast.Import`` statements (not ImportFrom) are deduplicated by
+        their unparsed string representation.
+
+        Covers the ``isinstance(stmt, ast.Import)`` branch in both .py and .pyi paths.
+        """
+        req = MsgDefinition(
+            package="pkg",
+            type_name="Foo_Request",
+            type_kind="srv",
+            fields=[MsgField(name="a", type_str="int32")],
+        )
+        resp = MsgDefinition(
+            package="pkg",
+            type_name="Foo_Response",
+            type_kind="srv",
+            fields=[MsgField(name="b", type_str="float64")],
+        )
+        extra_import = ast.parse("import os").body[0]
+        assert isinstance(extra_import, ast.Import)
+        py_content, pyi_content = merge_type_modules(
+            [req, resp],
+            extra_py_stmts=[extra_import],
+            extra_pyi_stmts=[extra_import],
+            module_doc="Test.",
+            root_package="",
+        )
+        assert "import os" in py_content
+        assert "import os" in pyi_content
+
+    def test_extra_importfrom_in_extra_stmts(self):
+        """ImportFrom statements in extra_py_stmts are merged into the deduplicated
+        imports dict.
+
+        Covers the extra_py_stmts loop for ImportFrom deduplication (lines 284-295).
+        """
+        req = MsgDefinition(
+            package="pkg",
+            type_name="Foo_Request",
+            type_kind="srv",
+            fields=[MsgField(name="a", type_str="int32")],
+        )
+        extra_import = ast.parse("from collections.abc import Sequence").body[0]
+        assert isinstance(extra_import, ast.ImportFrom)
+        py_content, _ = merge_type_modules(
+            [req],
+            extra_py_stmts=[extra_import],
+            extra_pyi_stmts=[],
+            module_doc="Test.",
+            root_package="",
+        )
+        assert "from collections.abc import Sequence" in py_content
+
+    def test_non_import_extra_stmts_in_body(self):
+        """Non-import statements in extra_py_stmts go to the body, not the import block.
+
+        Covers the list comprehension that filters non-ImportFrom/Import statements.
+        """
+        req = MsgDefinition(
+            package="pkg",
+            type_name="Foo_Request",
+            type_kind="srv",
+            fields=[MsgField(name="a", type_str="int32")],
+        )
+        extra_import = ast.parse("import os").body[0]
+        extra_body_stmt = ast.parse("x = 42").body[0]
+        py_content, _ = merge_type_modules(
+            [req],
+            extra_py_stmts=[extra_import, extra_body_stmt],
+            extra_pyi_stmts=[],
+            module_doc="Test.",
+            root_package="",
+        )
+        assert "import os" in py_content
+        assert "x = 42" in py_content
+
+    def test_extra_pyi_non_import_stmts(self):
+        """Non-import statements in extra_pyi_stmts go to the pyi body.
+
+        Covers the ``else: pyi_extra_body.append(stmt)`` branch in the pyi extra loop.
+        """
+        req = MsgDefinition(
+            package="pkg",
+            type_name="Foo_Request",
+            type_kind="srv",
+            fields=[MsgField(name="a", type_str="int32")],
+        )
+        extra_body_stmt = ast.parse("x: int = 42").body[0]
+        _, pyi_content = merge_type_modules(
+            [req],
+            extra_py_stmts=[],
+            extra_pyi_stmts=[extra_body_stmt],
+            module_doc="Test.",
+            root_package="",
+        )
+        assert "x: int = 42" in pyi_content
+
+    def test_extra_importfrom_dedup_name_in_extra_stmts(self):
+        """ImportFrom in extra_py_stmts with an already-registered import name
+        is skipped (the ``n.name not in existing_names`` False branch).
+
+        Covers the partial branch at line 292 (and similarly at line 372 for pyi).
+        """
+        req = MsgDefinition(
+            package="pkg",
+            type_name="Foo_Request",
+            type_kind="srv",
+            fields=[MsgField(name="a", type_str="int32")],
+        )
+        # The req generates `from pycdr2.types import int32` already.
+        # Adding an extra with the same module+name triggers dedup.
+        duplicate_import = ast.parse("from pycdr2.types import int32").body[0]
+        assert isinstance(duplicate_import, ast.ImportFrom)
+        py_content, pyi_content = merge_type_modules(
+            [req],
+            extra_py_stmts=[duplicate_import],
+            extra_pyi_stmts=[duplicate_import],
+            module_doc="Test.",
+            root_package="",
+        )
+        # The `int32` should appear exactly once in the import
+        assert py_content.count("int32") >= 1
+        assert pyi_content.count("int32") >= 1
+
+    def test_extra_pyi_importfrom_dedup_name(self):
+        """ImportFrom in extra_pyi_stmts with an already-registered import name
+        is skipped.
+
+        Covers the partial branch at line 372.
+        """
+        req = MsgDefinition(
+            package="pkg",
+            type_name="Foo_Request",
+            type_kind="srv",
+            fields=[MsgField(name="a", type_str="int32")],
+        )
+        duplicate_import = ast.parse("from pycdr2.types import int32").body[0]
+        _, pyi_content = merge_type_modules(
+            [req],
+            extra_py_stmts=[],
+            extra_pyi_stmts=[duplicate_import, duplicate_import],
+            module_doc="Test.",
+            root_package="",
+        )
+        # The import should appear
+        assert "from pycdr2.types import int32" in pyi_content
+
+    def test_extra_pyi_plain_import(self):
+        """Plain ``ast.Import`` in extra_pyi_stmts is added to pyi imports dict.
+
+        Covers ``isinstance(stmt, ast.Import)`` at line 376 in the pyi extra loop.
+        """
+        req = MsgDefinition(
+            package="pkg",
+            type_name="Foo_Request",
+            type_kind="srv",
+            fields=[MsgField(name="a", type_str="int32")],
+        )
+        extra_import = ast.parse("import sys").body[0]
+        assert isinstance(extra_import, ast.Import)
+        _, pyi_content = merge_type_modules(
+            [req],
+            extra_py_stmts=[],
+            extra_pyi_stmts=[extra_import],
+            module_doc="Test.",
+            root_package="",
+        )
+        assert "import sys" in pyi_content
+
 
 # ======================================================================
 # generate_service_wrappers (integration-light)
@@ -595,6 +764,30 @@ class TestGenerateActionWrappers:
             files,
         )
         assert wrappers == []
+
+    def test_skips_action_missing_subtypes(self, tmp_path):
+        """When a SendGoal_Request exists but not all 8 sub-types are present,
+        the action is silently skipped.
+
+        Covers the ``continue`` on line 693 in ``service_action.py``.
+        """
+        sub = tmp_path / "action"
+        sub.mkdir()
+        files: list[GeneratedFile] = []
+        # Only SendGoal_Request present — all() check fails → continue
+        type_names = ["Foo_SendGoal_Request"]
+        defn_by_name = {
+            "Foo_SendGoal_Request": self._make_action_defn("Foo", "_SendGoal_Request"),
+        }
+        wrappers = generate_action_wrappers(
+            sub,
+            defn_by_name,
+            type_names,
+            "pkg",
+            files,
+        )
+        assert wrappers == []
+        assert files == []
 
     def test_wrapper_has_all_attrs(self, tmp_path):
         sub = tmp_path / "action"

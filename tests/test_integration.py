@@ -11,10 +11,9 @@ import time
 import pytest
 import zenoh
 
-from zros2 import ZRosClient, Publisher, Subscriber, ServiceClient
+from zros2 import LivelinessType, Qos, ZRosClient
 
 from ._test_msgs import ExampleService, IntMsg, PairMsg, StringMsg
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -211,7 +210,8 @@ class TestService:
             time.sleep(0.3)  # allow Zenoh to propagate
 
             client = client_zros_client.create_srv_client(
-                service_name, ExampleService,
+                service_name,
+                ExampleService,
             )
             result = client.send_request(IntMsg(data=99), timeout=3000)
 
@@ -229,7 +229,8 @@ class TestService:
         from zros2.exceptions import ServiceNotAvailableException
 
         client = client_zros_client.create_srv_client(
-            "test/integration/nonexistent", ExampleService,
+            "test/integration/nonexistent",
+            ExampleService,
         )
 
         with pytest.raises(ServiceNotAvailableException):
@@ -253,8 +254,6 @@ class TestTwoClients:
         This test verifies that two separate ZRosClient instances
         (each backed by their own Zenoh session) can communicate.
         """
-        import socket as _socket
-
         # Create a "client" config that connects to the existing server port
         client_config = zenoh.Config()
         client_config.insert_json5(
@@ -275,19 +274,110 @@ class TestTwoClients:
 
         topic = "test/integration/extra_client"
 
-        with extra_client:
-            with (
-                server_zros_client.create_subscriber(topic, PairMsg) as sub,
-                extra_client.create_publisher(topic, PairMsg) as pub,
-            ):
-                sub.subscribe(callback)
-                time.sleep(0.3)
+        with (
+            extra_client,
+            server_zros_client.create_subscriber(topic, PairMsg) as sub,
+            extra_client.create_publisher(topic, PairMsg) as pub,
+        ):
+            sub.subscribe(callback)
+            time.sleep(0.3)
 
-                pub.publish(PairMsg(value=7, label="extra"))
+            pub.publish(PairMsg(value=7, label="extra"))
 
-                assert _wait_for_condition(cv, lambda: len(received) > 0), (
-                    "Timed out waiting for message from extra client"
-                )
+            assert _wait_for_condition(cv, lambda: len(received) > 0), (
+                "Timed out waiting for message from extra client"
+            )
 
         assert received[0].value == 7
         assert received[0].label == "extra"
+
+
+class TestActionClient:
+    """Integration tests for :class:`Action`."""
+
+    def test_create_action_client(
+        self,
+        server_zros_client: ZRosClient,
+    ) -> None:
+        """Create an action client with explicit timeout (covers line 220)."""
+        from typing import cast
+
+        from zros2.types import RosAction
+
+        from ._test_msgs import ExampleAction
+
+        action_type = cast(type[RosAction], ExampleAction)
+        action = server_zros_client.create_action_client(
+            "test/intg/action",
+            action_type,
+            timeout=0,  # 0 → defaults to 3000
+        )
+        assert action is not None
+        assert action._timeout == 3000
+
+    def test_create_action_client_with_namespace(
+        self,
+        server_zros_client: ZRosClient,
+    ) -> None:
+        """Create an action client with a namespace (covers line 221)."""
+        from typing import cast
+
+        from zros2.types import RosAction
+
+        from ._test_msgs import ExampleAction
+
+        action_type = cast(type[RosAction], ExampleAction)
+        action = server_zros_client.create_action_client(
+            "test/intg/action",
+            action_type,
+            namespace="my_device",
+        )
+        assert action is not None
+        assert action._action_name == "my_device/test/intg/action"
+
+
+class TestLivelinessIntegration:
+    """Integration tests for :class:`Liveliness`."""
+
+    def test_create_liveliness_with_qos(
+        self,
+        server_zros_client: ZRosClient,
+        client_zros_client: ZRosClient,
+    ) -> None:
+        """Create liveliness monitor with explicit qos (covers _client.py lines 248-251)."""
+        liv = server_zros_client.create_liveliness(
+            LivelinessType.PUBLISHER,
+            name="test/topic",
+            ros2_type="std_msgs/msg/String",
+            qos=Qos(reliability=1),
+        )
+        assert liv is not None
+        assert liv._ke is not None
+
+    def test_create_liveliness_with_namespace(
+        self,
+        server_zros_client: ZRosClient,
+        client_zros_client: ZRosClient,
+    ) -> None:
+        """Create liveliness monitor with namespace (covers namespace handling)."""
+        liv = server_zros_client.create_liveliness(
+            LivelinessType.SERVICE_SERVER,
+            name="echo",
+            ros2_type="test_pkg/srv/Echo",
+            namespace="my_device",
+        )
+        assert liv is not None
+        assert "my_device" in liv._ke
+
+    def test_create_liveliness_default_qos(
+        self,
+        server_zros_client: ZRosClient,
+    ) -> None:
+        """Create liveliness with qos=None (covers default qos branch)."""
+        liv = server_zros_client.create_liveliness(
+            LivelinessType.SUBSCRIBER,
+            name="test/topic",
+            ros2_type="std_msgs/msg/String",
+        )
+        assert liv is not None
+        assert "/MS/" in liv._ke

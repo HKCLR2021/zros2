@@ -187,3 +187,65 @@ class TestSubscriber:
         with patch.object(logger, "exception") as mock_exc:
             cb(sample)  # Should log but not raise
             mock_exc.assert_called_once()
+
+    def test_callback_type_mismatch_raises_type_error(self):
+        """When deserialized value is not an instance of message_type, raise TypeError.
+
+        This test uses a real class (not a MagicMock) to avoid isinstance raising
+        "arg 2 must be a type" before the if-body can execute.
+        """
+        session = MagicMock()
+
+        class _WrongDeserialize:
+            """A message-like type whose deserialize returns a different type."""
+
+            __name__ = "ExpectedType"
+
+            @classmethod
+            def deserialize(cls, data: bytes) -> int:
+                return 42
+
+        msg_type = cast(type[RosMessage], _WrongDeserialize)
+        sub = Subscriber(session, "test/topic", msg_type)
+        sub._subscriber = MagicMock()
+        cb = sub._make_zenoh_callback(lambda msg: None)
+        sample = MagicMock()
+        sample.payload = b"irrelevant"
+
+        with patch.object(logger, "exception") as mock_exc:
+            cb(sample)
+            mock_exc.assert_called_once()
+
+    def test_callback_async_callback_detection(self):
+        """An async callback passed as a subscriber callback raises TypeError.
+
+        This test uses a real class so isinstance succeeds, and the async
+        callback's coroutine return value triggers the iscoroutine check.
+        """
+        session = MagicMock()
+
+        class _SimpleType:
+            """A real message type that deserializes to itself."""
+
+            __name__ = "SimpleType"
+
+            @classmethod
+            def deserialize(cls, data: bytes) -> "_SimpleType":
+                return cls()
+
+        msg_type = cast(type[RosMessage], _SimpleType)
+        sub = Subscriber(session, "test/topic", msg_type)
+        sub._subscriber = MagicMock()
+
+        async def async_callback(msg):
+            pass
+
+        cb = sub._make_zenoh_callback(
+            cast("Callable[[RosMessage], None]", async_callback)
+        )
+        sample = MagicMock()
+        sample.payload = b"irrelevant"
+
+        with patch.object(logger, "exception") as mock_exc:
+            cb(sample)
+            mock_exc.assert_called_once()

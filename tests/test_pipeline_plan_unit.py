@@ -68,4 +68,77 @@ class TestExecutePlan:
         generated = execute_plan(plan, dry_run=True)
         assert generated
         assert not output.exists()
-        assert all(hasattr(item, "path") and hasattr(item, "content") for item in generated)
+        assert all(
+            hasattr(item, "path") and hasattr(item, "content") for item in generated
+        )
+
+
+class TestRootInitUpdate:
+    """Tests for ``_update_root_init`` in ``pipeline/generate.py``."""
+
+    def test_root_init_import_appended_when_missing(self, tmp_path: pathlib.Path):
+        """When root __init__.py already exists but lacks registry import,
+        the import line is appended (covers line 256-257).
+
+        We test this indirectly via ``generate_all``: when the output directory
+        already contains an ``__init__.py`` that is missing the registry import,
+        ``_update_root_init`` appends it.
+        """
+        from zros2.generator.codegen.message import GeneratedFile
+        from zros2.generator.pipeline.generate import _update_root_init
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir(parents=True)
+        root_init = output_dir / "__init__.py"
+        root_init.write_text("# existing init\n")
+
+        files: list[GeneratedFile] = [
+            GeneratedFile(root_init, "# existing init\n"),
+        ]
+        _update_root_init(files, output_dir, distro="humble")
+        # The import line should have been appended
+        assert "from ._registry import" in files[0].content
+
+    def test_root_init_import_already_present(self, tmp_path: pathlib.Path):
+        """When root __init__.py already has the registry import, it is not
+        duplicated (the function returns early after the for-loop).
+
+        Covers the early-return path in ``_update_root_init``.
+        """
+        from zros2.generator.codegen.message import GeneratedFile
+        from zros2.generator.pipeline.generate import _update_root_init
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir(parents=True)
+        root_init = output_dir / "__init__.py"
+        existing_content = (
+            "# existing init\n"
+            "from ._registry import has_type, get_type, get_service, get_action, iter_types  # noqa: F401\n"
+        )
+        root_init.write_text(existing_content)
+
+        files: list[GeneratedFile] = [
+            GeneratedFile(root_init, existing_content),
+        ]
+        _original_content = files[0].content
+        _update_root_init(files, output_dir)
+        # Content should remain unchanged (import already present)
+        assert files[0].content == existing_content
+
+    def test_root_init_created_when_missing_from_files(self, tmp_path: pathlib.Path):
+        """When root __init__.py is not in the files list, it is created.
+
+        Covers the file-creation path (lines 260-271).
+        """
+        from zros2.generator.codegen.message import GeneratedFile
+        from zros2.generator.pipeline.generate import _update_root_init
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir(parents=True)
+
+        files: list[GeneratedFile] = []
+        _update_root_init(files, output_dir, distro="humble")
+        # A new GeneratedFile for __init__.py should have been appended
+        assert len(files) == 1
+        assert files[0].path == output_dir / "__init__.py"
+        assert "._registry import" in files[0].content

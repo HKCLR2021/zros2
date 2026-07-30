@@ -6,12 +6,39 @@ code path, including edge cases for bounded strings, sequences, arrays,
 external imports, and the ``root_package`` prefix logic.
 """
 
+from zros2.generator.parsing.types import TypeInfo
 from zros2.generator.semantics import get_default_value
 from zros2.generator.semantics.resolve_types import (
     ResolvedType,
+    inner_type_str,
     is_primitive,
     resolve_type,
 )
+
+# ======================================================================
+# inner_type_str
+# ======================================================================
+
+
+class TestInnerTypeStr:
+    """``inner_type_str`` — reconstruct inner type from ``TypeInfo``."""
+
+    def test_bounded_string(self):
+        info = TypeInfo(base_name="string", is_bounded_string=True, string_max=255)
+        assert inner_type_str(info) == "string<=255"
+
+    def test_plain_base_name(self):
+        info = TypeInfo(base_name="int32")
+        assert inner_type_str(info) == "int32"
+
+    def test_empty_base_name(self):
+        """When base_name is empty, return empty string.
+
+        Covers the ``return ""`` branch.
+        """
+        info = TypeInfo(base_name="")
+        assert inner_type_str(info) == ""
+
 
 # ======================================================================
 # ResolvedType structure

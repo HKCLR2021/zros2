@@ -109,6 +109,36 @@ class TestAction:
         with pytest.raises(ActionInvokeException):
             action.send_goal()
 
+    def test_send_goal_with_feedback_callback(self):
+        """send_goal should subscribe feedback when callback is set.
+
+        Covers the ``if (callback := self._feedback_callback) is not None:`` branch.
+        """
+        session = MagicMock()
+        session.is_closed.return_value = False
+        session.get.return_value = iter([])
+
+        action = Action(session, "test/action", _mock_action, timeout=3000)
+        action.feedback_callback = lambda msg: None
+        with pytest.raises(ActionInvokeException):
+            action.send_goal()
+        # feedback_subscriber.subscribe was called
+        assert action._feedback_subscriber._subscriber is not None
+
+    def test_send_goal_with_explicit_goal(self):
+        """send_goal with an explicit goal argument should use it.
+
+        Covers the ``if goal is None:`` branch where goal is provided.
+        """
+        session = MagicMock()
+        session.is_closed.return_value = False
+        session.get.return_value = iter([])
+
+        action = Action(session, "test/action", _mock_action, timeout=3000)
+        goal = _MockActionType.Goal()
+        with pytest.raises(ActionInvokeException):
+            action.send_goal(goal=goal)
+
     def test_get_result_raises_action_invoke_exception(self):
         """get_result should wrap ServiceException in ActionInvokeException."""
         session = MagicMock()

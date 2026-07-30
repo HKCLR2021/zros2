@@ -77,6 +77,43 @@ class TestGeneratedFile:
 
 
 # ======================================================================
+# MsgDefinition.__post_init__
+# ======================================================================
+
+
+class TestMsgDefinitionPostInit:
+    """Tests for ``MsgDefinition.__post_init__``."""
+
+    def test_full_name_auto_generated(self):
+        """When full_name is not provided, it's auto-generated."""
+        defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
+        assert defn.full_name == "test/msg/Foo"
+
+    def test_full_name_preserved_when_set(self):
+        """When full_name is explicitly provided, it's preserved.
+
+        Covers the ``if not self.full_name:`` branch skipping the assignment.
+        """
+        defn = MsgDefinition(
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
+            full_name="custom/msg/Name",
+        )
+        assert defn.full_name == "custom/msg/Name"
+
+    def test_empty_full_name_generated(self):
+        """When full_name is empty string, it's auto-generated."""
+        defn = MsgDefinition(
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
+            full_name="",
+        )
+        assert defn.full_name == "test/msg/Foo"
+
+
+# ======================================================================
 # registry_import
 # ======================================================================
 
@@ -116,6 +153,21 @@ class TestNeedsOptionalAnnotation:
     def test_sequence_type_with_none_default_needs_optional(self):
         assert _needs_optional_annotation("None", "sequence[float64]")
         assert _needs_optional_annotation("None", "array[float64, 3]")
+
+    def test_bounded_string_with_none_default_does_not_need_optional(self):
+        """Bounded strings with None default do not need Optional.
+
+        Covers the ``if base == "string" and "<=" in type_str: return False`` branch.
+        """
+        assert not _needs_optional_annotation("None", "string<=255")
+
+    def test_non_none_default_returns_false_early(self):
+        """When default is not "None", return False without checking type_str.
+
+        Covers the ``if default != "None": return False`` branch on line 83.
+        """
+        # Provide a value that is not "None" — function returns False immediately.
+        assert not _needs_optional_annotation("42", "UnknownType")
 
 
 # ======================================================================

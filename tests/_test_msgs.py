@@ -89,3 +89,155 @@ class ExampleService:
 
     Request: ClassVar[type[IntMsg]] = IntMsg  # type: ignore[valid-type]
     Response: ClassVar[type[PairMsg]] = PairMsg  # type: ignore[valid-type]
+
+
+class ExampleAction:
+    """Minimal action type for testing create_action_client."""
+
+    class Goal:
+        """Action goal."""
+
+        def serialize(self) -> bytes:
+            return b""
+
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> "ExampleAction.Goal":
+            return cls()
+
+        @classmethod
+        def from_attributes(cls, obj: Any) -> "ExampleAction.Goal":
+            return cls()
+
+    class Result:
+        """Action result."""
+
+        def serialize(self) -> bytes:
+            return b""
+
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> "ExampleAction.Result":
+            return cls()
+
+        @classmethod
+        def from_attributes(cls, obj: Any) -> "ExampleAction.Result":
+            return cls()
+
+    class Feedback:
+        """Action feedback."""
+
+        def serialize(self) -> bytes:
+            return b""
+
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> "ExampleAction.Feedback":
+            return cls()
+
+        @classmethod
+        def from_attributes(cls, obj: Any) -> "ExampleAction.Feedback":
+            return cls()
+
+    class FeedbackMessage:
+        """Action feedback message."""
+
+        @classmethod
+        def deserialize(cls, data: bytes) -> "ExampleAction.FeedbackMessage":
+            return cls()
+
+        def serialize(self) -> bytes:
+            return b""
+
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> "ExampleAction.FeedbackMessage":
+            return cls()
+
+        @classmethod
+        def from_attributes(cls, obj: Any) -> "ExampleAction.FeedbackMessage":
+            return cls()
+
+    class SendGoal_Request:
+        """Send goal request."""
+
+        def serialize(self) -> bytes:
+            return b""
+
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> "ExampleAction.SendGoal_Request":
+            return cls()
+
+        @classmethod
+        def from_attributes(cls, obj: Any) -> "ExampleAction.SendGoal_Request":
+            return cls()
+
+    class SendGoal_Response:
+        """Send goal response."""
+
+        @classmethod
+        def deserialize(cls, data: bytes) -> "ExampleAction.SendGoal_Response":
+            return cls()
+
+        def serialize(self) -> bytes:
+            return b""
+
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> "ExampleAction.SendGoal_Response":
+            return cls()
+
+        @classmethod
+        def from_attributes(cls, obj: Any) -> "ExampleAction.SendGoal_Response":
+            return cls()
+
+    class GetResult_Request:
+        """Get result request."""
+
+        def serialize(self) -> bytes:
+            return b""
+
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> "ExampleAction.GetResult_Request":
+            return cls()
+
+        @classmethod
+        def from_attributes(cls, obj: Any) -> "ExampleAction.GetResult_Request":
+            return cls()
+
+    class GetResult_Response:
+        """Get result response."""
+
+        @classmethod
+        def deserialize(cls, data: bytes) -> "ExampleAction.GetResult_Response":
+            return cls()
+
+        def serialize(self) -> bytes:
+            return b""
+
+        def to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def from_dict(cls, data: dict[str, Any]) -> "ExampleAction.GetResult_Response":
+            return cls()
+
+        @classmethod
+        def from_attributes(cls, obj: Any) -> "ExampleAction.GetResult_Response":
+            return cls()

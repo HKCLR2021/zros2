@@ -5,10 +5,12 @@ Tests cover :class:`Qos`, :class:`LivelinessKey`, and the
 do not require a real Zenoh session.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from zros2.discovery._key import LivelinessKey
-from zros2.discovery._liveliness import _ENTITY_BUILDER, LivelinessType
+from zros2.discovery._liveliness import _ENTITY_BUILDER, Liveliness, LivelinessType
 from zros2.discovery._qos import Qos
 
 # ======================================================================
@@ -339,3 +341,169 @@ class TestEntityBuilder:
                 result = builder("id", "name", "type")
             assert isinstance(result, str)
             assert result.startswith("@")
+
+
+# ======================================================================
+# Liveliness class (requires mocked Zenoh session proxy)
+# ======================================================================
+
+
+class TestLivelinessClass:
+    """Tests for :class:`zros2.discovery._liveliness.Liveliness`."""
+
+    def test_unsupported_entity_raises_value_error(self):
+        """Passing an entity type not in _ENTITY_BUILDER should raise ValueError."""
+        session = MagicMock()
+        with pytest.raises(ValueError, match="Unsupported entity type"):
+            Liveliness(session, LivelinessType.ALL)  # ALL is not in builder
+
+    def test_no_qos_defaults_to_any(self):
+        """When qos is None, it defaults to Qos.any() which returns '*'."""
+        session = MagicMock()
+        liv = Liveliness(
+            session, LivelinessType.SERVICE_SERVER, name="echo", ros2_type="pkg/Srv"
+        )
+        # No qos → Qos.any() which produces '*' appended to the KE.
+        assert liv._ke is not None
+        assert "echo" in liv._ke
+
+    def test_publisher_entity_uses_qos(self):
+        """PUBLISHER entity builds a KE with QoS parameter."""
+        session = MagicMock()
+        liv = Liveliness(
+            session,
+            LivelinessType.PUBLISHER,
+            name="my_topic",
+            ros2_type="pkg/Msg",
+            qos=Qos(reliability=1),
+        )
+        assert "/MP/" in liv._ke
+        assert ":1::" in liv._ke
+
+    def test_subscriber_entity_uses_qos(self):
+        """SUBSCRIBER entity builds a KE with QoS parameter."""
+        session = MagicMock()
+        liv = Liveliness(
+            session,
+            LivelinessType.SUBSCRIBER,
+            name="my_topic",
+            ros2_type="pkg/Msg",
+            qos=Qos(durability=2),
+        )
+        assert "/MS/" in liv._ke
+        assert "::2:" in liv._ke
+
+    def test_service_server_entity_no_qos(self):
+        """Service / action entities build KE without QoS parameter."""
+        session = MagicMock()
+        liv = Liveliness(
+            session,
+            LivelinessType.SERVICE_SERVER,
+            name="echo",
+            ros2_type="pkg/Srv",
+        )
+        assert "/SS/" in liv._ke
+        assert "echo" in liv._ke
+
+    def test_action_client_entity(self):
+        """Action client entity builds KE correctly."""
+        session = MagicMock()
+        liv = Liveliness(
+            session,
+            LivelinessType.ACTION_CLIENT,
+            name="fib",
+            ros2_type="pkg/Act",
+        )
+        assert "/AC/" in liv._ke
+        assert "fib" in liv._ke
+
+    def test_context_manager(self):
+        """Liveliness can be used as a context manager."""
+        session = MagicMock()
+        with Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo") as liv:
+            assert liv is not None
+        # __exit__ calls close → _close_subscriber → no-op (sub is None)
+
+    def test_close_subscriber_when_sub_is_none(self):
+        """_close_subscriber is idempotent when _sub is None."""
+        session = MagicMock()
+        liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
+        liv._close_subscriber()  # Should not raise
+        assert liv._sub is None
+
+    def test_close_subscriber_swallows_exception(self):
+        """_close_subscriber catches and logs exceptions from undeclare."""
+        session = MagicMock()
+        liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
+        liv._sub = MagicMock()
+        liv._sub.undeclare.side_effect = RuntimeError("boom")
+        liv._close_subscriber()  # Should not raise
+        assert liv._sub is None
+
+    def test_close_calls_close_subscriber(self):
+        """close() delegates to _close_subscriber."""
+        session = MagicMock()
+        liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
+        liv._sub = MagicMock()
+        liv.close()
+        assert liv._sub is None
+
+    def test_get_returns_samples(self):
+        """``get()`` calls ``zenoh_session.liveliness().get()`` and returns samples.
+
+        Covers line 55 in ``_liveliness.py``.
+        """
+        session = MagicMock()
+        # Mock the liveliness chain: session.liveliness().get(ke) returns an iterable
+        mock_sample = MagicMock()
+        mock_sample.key_expr = "test/ke"
+        session.liveliness.return_value.get.return_value = iter([mock_sample])
+
+        liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
+        results = liv.get()
+        assert len(results) == 1
+        assert results[0].key_expr == "test/ke"
+        session.liveliness.return_value.get.assert_called_once_with(liv._ke)
+
+    def test_subscribe_returns_subscriber(self):
+        """``subscribe()`` calls ``declare_subscriber`` and returns the subscriber.
+
+        Covers lines 69-73 in ``_liveliness.py``.
+        """
+        session = MagicMock()
+        mock_sub = MagicMock()
+        session.liveliness.return_value.declare_subscriber.return_value = mock_sub
+
+        liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
+        callback = lambda s: None
+        result = liv.subscribe(callback)
+        assert result is mock_sub
+        assert liv._sub is mock_sub
+        session.liveliness.return_value.declare_subscriber.assert_called_once_with(
+            liv._ke, callback
+        )
+
+    def test_get_returns_empty_list_when_no_entities(self):
+        """``get()`` returns an empty list when no matching entities exist."""
+        session = MagicMock()
+        session.liveliness.return_value.get.return_value = iter([])
+
+        liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
+        results = liv.get()
+        assert results == []
+
+    def test_subscribe_replaces_existing_subscriber(self):
+        """``subscribe()`` closes any existing subscriber before creating a new one."""
+        session = MagicMock()
+        old_sub = MagicMock()
+        new_sub = MagicMock()
+        session.liveliness.return_value.declare_subscriber.return_value = new_sub
+
+        liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
+        liv._sub = old_sub
+
+        callback = lambda s: None
+        result = liv.subscribe(callback)
+        assert result is new_sub
+        assert liv._sub is new_sub
+        old_sub.undeclare.assert_called_once()

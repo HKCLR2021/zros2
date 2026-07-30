@@ -1114,3 +1114,57 @@ class TestCLI:
         ]
         with mock.patch.object(sys, "argv", test_args):
             main()
+
+    def test_main_value_error_prints_error(self, tmp_path):
+        """main() with broken message triggers ValueError path (lines 84-86)."""
+        import sys
+        from unittest import mock
+
+        from zros2.generator.cli import main
+
+        pkg_dir = tmp_path / "broken_pkg"
+        (pkg_dir / "msg").mkdir(parents=True)
+        # A message referencing a missing type will cause ValueError
+        (pkg_dir / "msg" / "Broken.msg").write_text("MissingType value\n")
+
+        test_args = [
+            "zros2-gen",
+            "--msg-dirs",
+            str(pkg_dir),
+            "--ros-version",
+            "humble",
+            "--output",
+            str(tmp_path / "out"),
+        ]
+        with mock.patch.object(sys, "argv", test_args):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+
+    def test_main_with_multiple_msg_dirs(self, tmp_path):
+        """main() with multiple --msg-dirs prints plural label (lines 90-92)."""
+        import sys
+        from unittest import mock
+
+        from zros2.generator.cli import main
+
+        pkg1 = tmp_path / "pkg_a"
+        (pkg1 / "msg").mkdir(parents=True)
+        (pkg1 / "msg" / "A.msg").write_text("float64 x\n")
+
+        pkg2 = tmp_path / "pkg_b"
+        (pkg2 / "msg").mkdir(parents=True)
+        (pkg2 / "msg" / "B.msg").write_text("float64 y\n")
+
+        test_args = [
+            "zros2-gen",
+            "--msg-dirs",
+            str(pkg1),
+            str(pkg2),
+            "--ros-version",
+            "humble",
+            "--output",
+            str(tmp_path / "out"),
+        ]
+        with mock.patch.object(sys, "argv", test_args):
+            main()

@@ -130,7 +130,7 @@ def _check_type(value: Any, expected: Any) -> bool:
         return True
 
 
-def _type_name(tp: type) -> str:
+def _type_name(tp: Any) -> str:
     """Return a human-readable name for a type, handling generics."""
     origin = get_origin(tp)
     if origin is not None:

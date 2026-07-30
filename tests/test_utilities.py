@@ -7,6 +7,7 @@ from zros2.generator.semantics.utilities import (
     _format_pycdr2_imports,
     default_expr,
     generated_metadata_stmts,
+    header_comment,
     to_snake_case,
 )
 
@@ -206,3 +207,42 @@ class TestGeneratedMetadataStmts:
         for stmt in generated_metadata_stmts("x.msg"):
             assert not isinstance(stmt, ast.AnnAssign)
             assert isinstance(stmt, ast.Assign)
+
+
+# ======================================================================
+# header_comment
+# ======================================================================
+
+
+class TestHeaderComment:
+    """``header_comment`` — do-not-modify header generation."""
+
+    def test_with_content_includes_sha1(self):
+        """When content is provided, SHA1 hash line is included."""
+        result = header_comment(content="class Foo: pass", distro="humble")
+        assert "SHA1:" in result
+        assert "ROS 2 distro: humble" in result
+        assert "DO NOT MODIFY" in result
+        assert "Generated at:" in result
+
+    def test_without_content_omits_sha1(self):
+        """When content is empty, SHA1 hash line is omitted.
+
+        Covers the ``if content:`` branch in ``header_comment``.
+        """
+        result = header_comment(content="", distro="")
+        assert "SHA1:" not in result
+        assert "DO NOT MODIFY" in result
+        assert "Generated at:" in result
+
+    def test_without_distro(self):
+        """When distro is empty, the distro line is omitted."""
+        result = header_comment(content="class Foo: pass")
+        assert "SHA1:" in result
+        assert "ROS 2 distro:" not in result
+
+    def test_empty_content_and_no_distro(self):
+        """Both sha1 and distro lines omitted."""
+        result = header_comment()
+        assert "SHA1:" not in result
+        assert "ROS 2 distro:" not in result
