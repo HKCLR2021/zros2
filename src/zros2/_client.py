@@ -47,12 +47,16 @@ class ZRosClient:
         self,
         config: str | zenoh.Config,
     ):
-        if isinstance(config, str):
+        if type(config) is str:
             if not os.path.exists(config):
                 raise FileNotFoundError("Zenoh Config file not found")
             zenoh_config = zenoh.Config.from_file(config)
-        else:
+        elif type(config) is zenoh.Config:
             zenoh_config = config
+        else:
+            raise TypeError(
+                f"Expected str or zenoh.Config, got {type(config).__name__}"
+            )
 
         self._zenoh_session: zenoh.Session = zenoh.open(zenoh_config)
         self._session_proxy: ZenohSessionProxy = ZenohSessionProxy(self._zenoh_session)
