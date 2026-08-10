@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Callable
-from typing import Any, Self
+from typing import Self
 
 import zenoh
 
@@ -43,21 +43,33 @@ class Liveliness:
         if qos is None:
             qos = Qos.any()
 
+        self._ke: str
         if entity in (LivelinessType.PUBLISHER, LivelinessType.SUBSCRIBER):
             self._ke = builder("*", name, ros2_type, qos=qos)
         else:
             self._ke = builder("*", name, ros2_type)
-        self._zenoh_session = zenoh_session
-        self._sub: zenoh.Subscriber[Any] | None = None
+        self._zenoh_session: ZenohSessionProxy = zenoh_session
+        self._sub: zenoh.Subscriber[None] | None = None
 
     def get(self) -> list[zenoh.Sample]:
         """Return currently alive matching entities."""
-        return list(self._zenoh_session.liveliness().get(self._ke))
+        samples: list[zenoh.Sample] = []
+        for reply in self._zenoh_session.liveliness().get(self._ke):
+            sample = reply.ok
+            if sample is not None:
+                samples.append(sample)
+                continue
+            err = reply.err
+            assert err is not None, "reply.err must be set when reply.ok is falsy"
+            logger.warning(
+                "Liveliness query returned an error: %s", err.payload.to_string()
+            )
+        return samples
 
     def subscribe(
         self,
-        callback: Callable[[zenoh.Sample], Any],
-    ) -> zenoh.Subscriber[Any] | None:
+        callback: Callable[[zenoh.Sample], object],
+    ) -> zenoh.Subscriber[None] | None:
         """Subscribe to matching entity liveliness changes.
 
         Args:
@@ -79,7 +91,7 @@ class Liveliness:
     def _close_subscriber(self) -> None:
         if self._sub is not None:
             try:
-                self._sub.undeclare()
+                self._sub.undeclare()  # pyright: ignore[reportUnknownMemberType] — zenoh stub lacks a return annotation
             except Exception:
                 logger.warning(
                     "Failed to undeclare liveliness subscriber", exc_info=True

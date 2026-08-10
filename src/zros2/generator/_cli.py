@@ -4,7 +4,8 @@ import argparse
 import pathlib
 import sys
 
-from .pipeline import VALID_DISTROS, build_plan, execute_plan
+from .parsing._discovery import VALID_DISTROS
+from .pipeline._plan import build_plan, execute_plan
 
 
 def build_parser() -> argparse.ArgumentParser:

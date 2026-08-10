@@ -19,12 +19,12 @@ avoids ad-hoc formatting logic in this layer.
 
 import ast
 
-from ..semantics.utilities import (
+from ..semantics._utilities import (
     generated_metadata_stmts,
     header_comment,
     to_snake_case,
 )
-from .message import registry_import
+from ._message import registry_import
 
 
 def generate_init_module(

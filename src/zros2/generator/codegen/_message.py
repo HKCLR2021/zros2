@@ -4,8 +4,6 @@ Produces Python source for a single .py module defining a dataclass-like class
 backed by pycdr2.IdlStruct for CDR serialization.
 """
 
-# pyright: ignore[reportUnusedFunction]
-
 import ast
 import pathlib
 from collections.abc import Iterator
@@ -13,10 +11,10 @@ from dataclasses import dataclass
 
 from lark import LarkError
 
-from ..parsing.models import MsgDefinition, MsgField
-from ..parsing.types import parse_type
-from ..semantics.resolve_types import inner_type_str, resolve_type
-from ..semantics.utilities import (
+from ..parsing._models import MsgDefinition, MsgField
+from ..parsing._types import parse_type
+from ..semantics._resolve_types import inner_type_str, resolve_type
+from ..semantics._utilities import (
     default_expr,
     generated_metadata_stmts,
     header_comment,
@@ -826,7 +824,7 @@ def generate_message_module(
     )
     module_stmts.append(
         ast.ImportFrom(
-            module="zros2.types.utils",
+            module="zros2.types._utils",
             names=[
                 ast.alias(name="from_attributes", asname="_from_attributes"),
             ],

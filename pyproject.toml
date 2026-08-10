@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zros2"
-version = "1.2.0"
+version = "2.0.0"
 description = "Zenoh ROS 2 bridge — lightweight ROS2-like communication over Zenoh"
 authors = [
     { name = "Dafan Wang" },
@@ -29,7 +29,7 @@ dev = [
 ]
 
 [project.scripts]
-zros2-gen = "zros2.generator.cli:main"
+zros2-gen = "zros2.generator.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/HKCLR2021/zros2"
@@ -50,3 +50,4 @@ include = ["zros2*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py", "benchmarks.py"]

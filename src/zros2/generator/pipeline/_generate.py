@@ -9,18 +9,18 @@ layer.
 import ast
 import pathlib
 
-from ..codegen.message import GeneratedFile, generate_message_module
-from ..codegen.package_init import generate_init_module, generate_package_init
-from ..codegen.registry import REGISTRY_AST
-from ..codegen.service_action import (
+from ..codegen._message import GeneratedFile, generate_message_module
+from ..codegen._package_init import generate_init_module, generate_package_init
+from ..codegen._registry import REGISTRY_AST
+from ..codegen._service_action import (
     ACTION_SUFFIXES,
     SRV_SUFFIXES,
     generate_action_wrappers,
     generate_service_wrappers,
 )
-from ..codegen.stubs import generate_stub_module
-from ..parsing.models import MsgDefinition
-from ..semantics.utilities import (
+from ..codegen._stubs import generate_stub_module
+from ..parsing._models import MsgDefinition
+from ..semantics._utilities import (
     generated_metadata_stmts,
     header_comment,
     to_snake_case,

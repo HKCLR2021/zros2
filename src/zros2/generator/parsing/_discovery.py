@@ -10,13 +10,13 @@ import re
 from collections.abc import Iterator
 
 from ..assets import BUILTIN_MSG_DIR
-from .models import MsgDefinition
-from .parser import (
+from ._models import MsgDefinition
+from ._parser import (
     parse_action_file,
     parse_msg_file,
     parse_srv_file,
 )
-from .types import ROS2_PRIMITIVE_TYPES
+from ._types import ROS2_PRIMITIVE_TYPES
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Builtin message discovery

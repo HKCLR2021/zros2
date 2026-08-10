@@ -5,7 +5,7 @@ generation time because it reads fields from an arbitrary source object
 whose shape is unknown until runtime.
 
 ``from_dict`` and ``to_dict`` are now generated as hardcoded methods
-on each message class by ``zros2.generator.codegen.message``.
+on each message class by ``zros2.generator.codegen._message``.
 """
 
 import types

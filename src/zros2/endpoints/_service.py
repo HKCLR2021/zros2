@@ -6,7 +6,8 @@ import zenoh
 
 from .._session import ZenohSessionProxy
 from ..exceptions import ServiceInvokeException, ServiceNotAvailableException
-from ..types import RosMessage, RosService
+from ..types._base import RosMessage
+from ..types._protocols import RosService
 
 
 class ServiceClient[ReqT: RosMessage, ResT: RosMessage]:
@@ -28,12 +29,13 @@ class ServiceClient[ReqT: RosMessage, ResT: RosMessage]:
         self._service_name = service_name
         self._srv_types = service_type
 
-    def send_request(self, payload: ReqT | None, timeout: int = 1000) -> ResT:
+    def send_request(self, payload: ReqT | None, timeout: int | None = 1000) -> ResT:
         """Send a service request via Zenoh.
 
         Args:
             payload: The request message instance, or ``None`` for an empty request.
-            timeout: Request timeout in milliseconds.
+            timeout: Request timeout in **milliseconds**.  ``None`` waits
+                indefinitely (default: 1000).
 
         Returns:
             Deserialized response message.

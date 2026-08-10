@@ -2,7 +2,7 @@
 
 import pathlib
 
-from ..codegen.message import GeneratedFile
+from ..codegen._message import GeneratedFile
 
 
 def write_generated_files(files: list[GeneratedFile]) -> list[pathlib.Path]:

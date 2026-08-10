@@ -20,13 +20,13 @@ from zros2.discovery._qos import Qos
 
 class TestQosToKeyExpr:
     def test_default_keyless(self):
-        """Default Qos with keyless=True produces '::::'."""
+        """An unconstrained Qos serializes to the '*' wildcard."""
         qos = Qos()
-        assert qos.to_key_expr(keyless=True) == ":::"
+        assert qos.to_key_expr(keyless=True) == "*"
 
     def test_keyed_emits_K(self):
         """keyless=False should emit 'K' at the start."""
-        qos = Qos()
+        qos = Qos(reliability=1)
         assert qos.to_key_expr(keyless=False).startswith("K")
 
     def test_with_reliability(self):
@@ -134,8 +134,9 @@ class TestQosFromKeyExpr:
 
 class TestQosAny:
     def test_returns_wildcard(self):
-        """Qos.any() should return '*'."""
-        assert Qos.any() == "*"
+        """Qos.any() should return an unconstrained Qos matching any QoS."""
+        assert Qos.any() == Qos()
+        assert Qos.any().to_key_expr() == "*"
 
 
 # ======================================================================
@@ -198,9 +199,9 @@ class TestLivelinessKeyBuilders:
         assert ke.endswith("*")
 
     def test_build_publisher_ke_without_qos(self):
-        """build_publisher_ke with qos=None should use default empty Qos."""
+        """build_publisher_ke with qos=None should use the any-wildcard QoS."""
         ke = LivelinessKey.build_publisher_ke("my_id", "topic", "pkg/Msg", qos=None)
-        assert ":::" in ke  # default empty QoS
+        assert ke.endswith("*")  # default empty QoS → wildcard
 
     def test_build_publisher_ke_escapes_slashes(self):
         """Topic and type slashes should be escaped in the KE."""
@@ -358,12 +359,12 @@ class TestLivelinessClass:
             Liveliness(session, LivelinessType.ALL)  # ALL is not in builder
 
     def test_no_qos_defaults_to_any(self):
-        """When qos is None, it defaults to Qos.any() which returns '*'."""
+        """When qos is None, it defaults to Qos.any()."""
         session = MagicMock()
         liv = Liveliness(
             session, LivelinessType.SERVICE_SERVER, name="echo", ros2_type="pkg/Srv"
         )
-        # No qos → Qos.any() which produces '*' appended to the KE.
+        # No qos → Qos.any() wildcard value.
         assert liv._ke is not None
         assert "echo" in liv._ke
 
@@ -451,19 +452,42 @@ class TestLivelinessClass:
     def test_get_returns_samples(self):
         """``get()`` calls ``zenoh_session.liveliness().get()`` and returns samples.
 
-        Covers line 55 in ``_liveliness.py``.
+        Covers line 55 in ``_liveliness.py``. Liveliness queries yield
+        ``Reply`` objects, so only the ``ok`` sample of each reply is kept.
         """
         session = MagicMock()
-        # Mock the liveliness chain: session.liveliness().get(ke) returns an iterable
         mock_sample = MagicMock()
         mock_sample.key_expr = "test/ke"
-        session.liveliness.return_value.get.return_value = iter([mock_sample])
+        mock_reply = MagicMock()
+        mock_reply.ok = mock_sample
+        mock_reply.err = None
+        session.liveliness.return_value.get.return_value = iter([mock_reply])
 
         liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
         results = liv.get()
         assert len(results) == 1
         assert results[0].key_expr == "test/ke"
         session.liveliness.return_value.get.assert_called_once_with(liv._ke)
+
+    def test_get_skips_error_replies(self):
+        """``get()`` drops error replies and only returns successful samples."""
+        session = MagicMock()
+        mock_sample = MagicMock()
+        mock_reply = MagicMock()
+        mock_reply.ok = mock_sample
+        mock_err = MagicMock()
+        mock_err.payload.to_string.return_value = "query timed out"
+        mock_err_reply = MagicMock()
+        mock_err_reply.ok = None
+        mock_err_reply.err = mock_err
+        session.liveliness.return_value.get.return_value = iter(
+            [mock_err_reply, mock_reply]
+        )
+
+        liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
+        results = liv.get()
+        assert len(results) == 1
+        assert results[0] is mock_sample
 
     def test_subscribe_returns_subscriber(self):
         """``subscribe()`` calls ``declare_subscriber`` and returns the subscriber.

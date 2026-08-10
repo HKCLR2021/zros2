@@ -6,12 +6,11 @@ import types
 from asyncio import iscoroutine
 from collections.abc import Callable
 from contextlib import suppress
-from typing import Any
 
 import zenoh
 
 from .._session import ZenohSessionProxy
-from ..types import RosMessage
+from ..types._base import RosMessage
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ class Subscriber[MsgT: RosMessage]:
         self._message_type = message_type
         self._zenoh_session = zenoh_session
         self._lock = threading.RLock()
-        self._subscriber: zenoh.Subscriber[Any] | None = None
+        self._subscriber: zenoh.Subscriber[MsgT] | None = None
 
     def __enter__(self) -> "Subscriber[MsgT]":
         """Enter the context manager.
@@ -138,6 +137,9 @@ class Subscriber[MsgT: RosMessage]:
 
                 result = user_callback(message)
                 if iscoroutine(result):
+                    # Close the abandoned coroutine so it does not leak a
+                    # "coroutine was never awaited" RuntimeWarning.
+                    result.close()
                     raise TypeError(
                         f"Async function passed as callback for topic "
                         f"'{self._topic}'. Subscriber callbacks must be synchronous."

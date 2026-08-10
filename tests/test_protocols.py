@@ -1,13 +1,14 @@
-"""Tests for zros2.types.protocols."""
+"""Tests for zros2.types._protocols."""
 
 from dataclasses import dataclass
 from typing import Any, get_type_hints
 
 from pycdr2 import IdlStruct
 from pycdr2._main import IdlMeta
-from pycdr2.types import int32, float64
+from pycdr2.types import float64, int32
+
 from zros2.types import RosMessage
-from zros2.types.protocols import RosService, RosAction
+from zros2.types._protocols import RosAction, RosActionView, RosService
 
 
 class TestRosMessageProtocol:
@@ -26,6 +27,7 @@ class TestRosMessageProtocol:
         # Attach methods expected by RosMessage protocol
         def _to_dict(self):  # type: ignore[no-untyped-def]
             return {"x": self.x, "y": self.y}
+
         Point.to_dict = _to_dict  # type: ignore[attr-defined]
         Point.from_dict = classmethod(lambda cls, d: cls(d["x"], d["y"]))  # type: ignore[attr-defined]
         Point.from_attributes = classmethod(lambda cls, o: cls(o.x, o.y))  # type: ignore[attr-defined]
@@ -37,7 +39,13 @@ class TestRosMessageProtocol:
 
     def test_protocol_attributes(self):
         """RosMessage should define serialize, deserialize, from_dict, to_dict."""
-        for attr in ("serialize", "deserialize", "from_dict", "from_attributes", "to_dict"):
+        for attr in (
+            "serialize",
+            "deserialize",
+            "from_dict",
+            "from_attributes",
+            "to_dict",
+        ):
             assert hasattr(RosMessage, attr), f"RosMessage missing {attr}"
 
     def test_service_annotation(self):
@@ -60,3 +68,12 @@ class TestRosMessageProtocol:
             "GetResult_Response",
         ):
             assert attr in hints, f"RosAction missing {attr} in hints"
+
+    def test_action_view_annotations(self):
+        """RosActionView should expose exactly the 3 user-facing members."""
+        hints = get_type_hints(RosActionView)
+        assert set(hints) == {"Goal", "Result", "Feedback"}
+
+    def test_action_view_is_subset_of_full_protocol(self):
+        """The view members must stay aligned with the full protocol."""
+        assert set(get_type_hints(RosActionView)) <= set(get_type_hints(RosAction))

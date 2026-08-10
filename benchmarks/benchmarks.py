@@ -13,8 +13,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from zros2.generator.codegen.message import generate_message_module
-from zros2.generator.parsing.models import MsgDefinition, MsgField
+from zros2.generator.codegen import generate_message_module
+from zros2.generator.parsing import MsgDefinition, MsgField
 
 # ═══════════════════════════════════════════════════════════════════════
 # Generated module loader — uses importlib instead of exec
@@ -101,39 +101,6 @@ def _gen(name: str, fields: list[MsgField], root_package: str = "") -> type:
     code = generate_message_module(defn, root_package=root_package)
     cleaned = _strip_unresolvable_imports(code)
     return _write_and_load(cleaned, name)
-
-
-def _gen_pair(
-    base_pkg: str,
-    name_a: str,
-    fields_a: list[MsgField],
-    name_b: str,
-    fields_b: list[MsgField],
-) -> tuple[type, type]:
-    """Generate two classes where the second references the first.
-
-    Both modules share a namespace so cross-module references resolve.
-    """
-    defn_a = MsgDefinition(
-        package=base_pkg,
-        type_name=name_a,
-        type_kind="msg",
-        fields=fields_a,
-    )
-    defn_b = MsgDefinition(
-        package=base_pkg,
-        type_name=name_b,
-        type_kind="msg",
-        fields=fields_b,
-    )
-
-    code_a = _strip_unresolvable_imports(generate_message_module(defn_a))
-    code_b = _strip_unresolvable_imports(generate_message_module(defn_b))
-
-    ns: dict = {}
-    cls_a = _write_and_load(code_a, name_a, ns)
-    cls_b = _write_and_load(code_b, name_b, ns)
-    return cls_a, cls_b
 
 
 def _gen_nest(name: str, fields: list[MsgField]) -> type:

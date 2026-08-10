@@ -8,8 +8,8 @@ import pathlib
 
 from lark import LarkError
 
-from .models import MsgDefinition, MsgField
-from .types import ROS2_PRIMITIVE_TYPES, parse_type
+from ._models import MsgDefinition, MsgField
+from ._types import ROS2_PRIMITIVE_TYPES, parse_type
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Inline comment stripping

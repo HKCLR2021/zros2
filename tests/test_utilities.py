@@ -2,7 +2,7 @@
 
 import ast
 
-from zros2.generator.semantics.utilities import (
+from zros2.generator.semantics._utilities import (
     _format_external_imports,
     _format_pycdr2_imports,
     default_expr,

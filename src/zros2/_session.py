@@ -1,6 +1,6 @@
 """Protected access to a shared Zenoh session."""
 
-from typing import Any
+from typing import Any, override
 
 import zenoh
 
@@ -16,7 +16,7 @@ class ZenohSessionProxy:
         """
         self.__dict__["_session"] = session
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         """Delegate safe attribute access to the underlying session.
 
         Raises:
@@ -30,11 +30,12 @@ class ZenohSessionProxy:
             )
         return getattr(self._session, name)
 
-    def __setattr__(self, name: str, value: Any):
+    @override
+    def __setattr__(self, name: str, value: object) -> None:
         """Prevent mutation of the proxy."""
         raise PermissionError("Modifying the session proxy is not allowed.")
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Leave the independently owned session untouched."""
 
 

@@ -4,15 +4,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
 
-from ..codegen.message import GeneratedFile
-from ..parsing.discovery import (
+from ..codegen._message import GeneratedFile
+from ..parsing._discovery import (
     builtin_msg_dirs,
     collect_all_types,
     validate_dependencies,
 )
-from ..parsing.models import MsgDefinition
-from .generate import generate_all
-from .writer import write_generated_files
+from ..parsing._models import MsgDefinition
+from ._generate import generate_all
+from ._writer import write_generated_files
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,7 @@ def execute_plan(
     """Generate sources for *plan*, optionally writing them to disk.
 
     Returns:
-        The list of :class:`~zros2.generator.codegen.message.GeneratedFile`
+        The list of :class:`~zros2.generator.codegen._message.GeneratedFile`
         objects when ``dry_run`` is true; otherwise the list of written paths.
     """
     generated = generate_all(

@@ -10,7 +10,7 @@ from typing import Any, ClassVar, Self
 
 from pycdr2 import IdlStruct
 
-from zros2.types.utils import from_attributes as _from_attributes
+from zros2.types._utils import from_attributes as _from_attributes
 
 
 @dataclass(init=False)
@@ -19,7 +19,7 @@ class StringMsg(IdlStruct):
 
     data: str
 
-    __annotations__ = {"data": str}  # type: ignore[assignment]
+    __annotations__ = {"data": str}  # type: ignore
 
     def __init__(self, *, data: str = "") -> None:
         self.data = data

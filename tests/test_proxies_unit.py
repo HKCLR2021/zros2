@@ -11,12 +11,12 @@ class TestZenohSessionProxy:
     """Tests for the Zenoh session proxy."""
 
     def test_getattr_delegates(self):
-        """Normal attribute access should pass through to the real session."""
+        """Undefined attribute access should pass through to the real session."""
         session = MagicMock()
         proxy = ZenohSessionProxy(session)
-        result = proxy.get
-        # Should return whatever session.get returns (a mock), not raise
-        assert result is session.get
+        result = proxy.info
+        # Should return whatever session.info returns (a mock), not raise
+        assert result is session.info
 
     def test_getattr_blocks_close(self):
         """Accessing 'close' should raise PermissionError."""

@@ -43,7 +43,7 @@ class TestZRosClientInit:
             try:
                 assert client.session is not None
             finally:
-                client._zenoh_session.close()
+                client.close()
         finally:
             os.unlink(tmp_path)
 
@@ -63,7 +63,7 @@ class TestZRosClientInit:
         try:
             assert client.session is not None
         finally:
-            client._zenoh_session.close()
+            client.close()
 
     def test_context_manager(self):
         """ZRosClient should work as a context manager."""
@@ -78,3 +78,35 @@ class TestZRosClientInit:
 
         with ZRosClient(config=config) as client:
             assert client.session is not None
+        assert client._zenoh_session.is_closed()
+
+    def test_close_closes_session(self):
+        """close() should close the underlying Zenoh session."""
+        import zenoh
+
+        config = zenoh.Config()
+        config.insert_json5("mode", '"peer"')
+        config.insert_json5("scouting/multicast/enabled", "false")
+        config.insert_json5("listen/endpoints", '["tcp/127.0.0.1:0"]')
+
+        from zros2 import ZRosClient
+
+        client = ZRosClient(config=config)
+        client.close()
+        assert client._zenoh_session.is_closed()
+
+    def test_close_is_idempotent(self):
+        """Calling close() repeatedly must not raise."""
+        import zenoh
+
+        config = zenoh.Config()
+        config.insert_json5("mode", '"peer"')
+        config.insert_json5("scouting/multicast/enabled", "false")
+        config.insert_json5("listen/endpoints", '["tcp/127.0.0.1:0"]')
+
+        from zros2 import ZRosClient
+
+        client = ZRosClient(config=config)
+        client.close()
+        client.close()
+        assert client._zenoh_session.is_closed()

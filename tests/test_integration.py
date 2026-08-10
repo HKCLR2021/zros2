@@ -15,7 +15,75 @@ from zros2 import LivelinessType, Qos, ZRosClient
 
 from ._test_msgs import ExampleService, IntMsg, PairMsg, StringMsg
 
-# ── Helpers ──────────────────────────────────────────────────────────
+# ── Service Readiness Tests ─────────────────────────────────────────
+
+
+class TestServiceReadiness:
+    """Liveliness-based service availability detection."""
+
+    _SRV_TYPE = "test/integration/srv/Ready"
+
+    def test_service_is_ready_detects_server_token(
+        self,
+        server_zros_client: ZRosClient,
+        client_zros_client: ZRosClient,
+    ) -> None:
+        """A declared SERVICE_SERVER token should make readiness True."""
+        from zros2.discovery._key import LivelinessKey
+
+        name = "test/integration/srv_ready"
+        token = server_zros_client.session.liveliness().declare_token(
+            LivelinessKey.build_service_server_ke("server", name, self._SRV_TYPE)
+        )
+        try:
+            assert (
+                client_zros_client.wait_for_service(
+                    name, self._SRV_TYPE, timeout_ms=3000
+                )
+                is True
+            )
+            assert client_zros_client.service_is_ready(name, self._SRV_TYPE) is True
+        finally:
+            token.undeclare()
+
+    def test_service_is_ready_rejects_wrong_type(
+        self,
+        server_zros_client: ZRosClient,
+        client_zros_client: ZRosClient,
+    ) -> None:
+        """A server of a different type should not count as ready."""
+        from zros2.discovery._key import LivelinessKey
+
+        name = "test/integration/srv_wrong_type"
+        token = server_zros_client.session.liveliness().declare_token(
+            LivelinessKey.build_service_server_ke(
+                "server", name, "test/integration/srv/Other"
+            )
+        )
+        try:
+            assert client_zros_client.service_is_ready(name, self._SRV_TYPE) is False
+        finally:
+            token.undeclare()
+
+    def test_service_is_ready_false_without_server(
+        self, client_zros_client: ZRosClient
+    ) -> None:
+        """An unserved name should report not ready."""
+        assert (
+            client_zros_client.service_is_ready(
+                "test/integration/absent", self._SRV_TYPE
+            )
+            is False
+        )
+
+    def test_wait_for_service_times_out(self, client_zros_client: ZRosClient) -> None:
+        """wait_for_service should return False when no server appears."""
+        assert (
+            client_zros_client.wait_for_service(
+                "test/integration/absent", self._SRV_TYPE, timeout_ms=300
+            )
+            is False
+        )
 
 
 def _wait_for_condition(
@@ -209,7 +277,7 @@ class TestService:
         try:
             time.sleep(0.3)  # allow Zenoh to propagate
 
-            client = client_zros_client.create_srv_client(
+            client = client_zros_client.create_service_client(
                 service_name,
                 ExampleService,
             )
@@ -228,7 +296,7 @@ class TestService:
         """Requesting a non-existent service raises an exception."""
         from zros2.exceptions import ServiceNotAvailableException
 
-        client = client_zros_client.create_srv_client(
+        client = client_zros_client.create_service_client(
             "test/integration/nonexistent",
             ExampleService,
         )
@@ -299,7 +367,7 @@ class TestActionClient:
         self,
         server_zros_client: ZRosClient,
     ) -> None:
-        """Create an action client with explicit timeout (covers line 220)."""
+        """Create an action client with an explicit timeout."""
         from typing import cast
 
         from zros2.types import RosAction
@@ -310,7 +378,26 @@ class TestActionClient:
         action = server_zros_client.create_action_client(
             "test/intg/action",
             action_type,
-            timeout=0,  # 0 → defaults to 3000
+            timeout=0,  # explicit 0 must not be replaced by the default
+        )
+        assert action is not None
+        assert action._timeout == 0
+
+    def test_create_action_client_default_timeout(
+        self,
+        server_zros_client: ZRosClient,
+    ) -> None:
+        """Omitting timeout falls back to the 3000ms default."""
+        from typing import cast
+
+        from zros2.types import RosAction
+
+        from ._test_msgs import ExampleAction
+
+        action_type = cast(type[RosAction], ExampleAction)
+        action = server_zros_client.create_action_client(
+            "test/intg/action",
+            action_type,
         )
         assert action is not None
         assert action._timeout == 3000

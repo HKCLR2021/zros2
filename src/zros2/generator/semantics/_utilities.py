@@ -2,7 +2,7 @@
 import formatters.
 
 **Zero-regex** — type pattern detection is delegated to the Lark-based
-:mod:`zros2.generator.parsing.types` parser."""
+:mod:`zros2.generator.parsing._types` parser."""
 
 import ast
 import datetime
@@ -12,7 +12,7 @@ from importlib.metadata import version as _pkg_version
 
 from lark import LarkError
 
-from ..parsing.types import parse_type
+from ..parsing._types import parse_type
 
 _PKG_VERSION: str = _pkg_version("zros2")
 

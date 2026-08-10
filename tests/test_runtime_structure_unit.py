@@ -9,7 +9,6 @@ from zros2 import (
     Qos,
     ServiceClient,
     Subscriber,
-    ZenohSessionProxy,
     ZRosClient,
 )
 from zros2.discovery import (
@@ -45,4 +44,8 @@ def test_root_package_reexports_canonical_runtime_symbols():
     assert zros2.Liveliness is DiscoveryLiveliness is Liveliness
     assert zros2.LivelinessType is DiscoveryLivelinessType is LivelinessType
     assert zros2.Qos is DiscoveryQos is Qos
-    assert zros2.ZenohSessionProxy is ZenohSessionProxy
+
+
+def test_zenoh_session_proxy_not_reexported():
+    """``ZenohSessionProxy`` is internal and must not be in the public API."""
+    assert not hasattr(zros2, "ZenohSessionProxy")

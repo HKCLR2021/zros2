@@ -9,19 +9,22 @@ import pytest
 from zros2.generator import (
     MsgDefinition,
     MsgField,
-    collect_all_types,
     generate_all,
-    generate_message_module,
-    generate_stub_module,
     parse_action_file,
     parse_msg_text,
     parse_srv_file,
     resolve_type,
-    validate_dependencies,
-    write_generated_files,
 )
-from zros2.generator.parsing.discovery import _strip_wrappers, builtin_msg_dirs
-from zros2.generator.semantics.utilities import (
+from zros2.generator.codegen._message import generate_message_module
+from zros2.generator.codegen._stubs import generate_stub_module
+from zros2.generator.parsing._discovery import (
+    _strip_wrappers,
+    builtin_msg_dirs,
+    collect_all_types,
+    validate_dependencies,
+)
+from zros2.generator.pipeline._writer import write_generated_files
+from zros2.generator.semantics._utilities import (
     default_expr,
     to_snake_case,
 )
@@ -419,26 +422,26 @@ class TestResolveTypeEdgeCases:
     """Additional edge cases for type resolution."""
 
     def test_bounded_string_type(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type("string<=128")
         assert "bounded_str" in resolved.annotation_expr
         assert resolved.external_import is None
 
     def test_sequence_type(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type("sequence<float64>")
         assert "sequence" in resolved.annotation_expr
 
     def test_fixed_array_type(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type("uint8[16]")
         assert "array" in resolved.annotation_expr
 
     def test_root_package_prefix(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type(
             "std_msgs/msg/String",
@@ -449,14 +452,14 @@ class TestResolveTypeEdgeCases:
         assert "my_msgs" in resolved.external_import
 
     def test_time_mapped(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type("time")
         assert resolved.external_import is not None
         assert "builtin_interfaces" in resolved.external_import
 
     def test_duration_mapped(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type("duration")
         assert resolved.external_import is not None
@@ -467,7 +470,7 @@ class TestParseEdgeCases:
     """Edge cases for msg text parsing."""
 
     def test_comment_after_field(self):
-        from zros2.generator.parsing.parser import parse_msg_text
+        from zros2.generator.parsing._parser import parse_msg_text
 
         text = "int32 x  # this is x"
         defn = parse_msg_text(text, package="test", type_name="T")
@@ -475,7 +478,7 @@ class TestParseEdgeCases:
         assert defn.fields[0].name == "x"
 
     def test_constant_field(self):
-        from zros2.generator.parsing.parser import parse_msg_text
+        from zros2.generator.parsing._parser import parse_msg_text
 
         text = "int32 FOO=42"
         defn = parse_msg_text(text, package="test", type_name="T")
@@ -484,7 +487,7 @@ class TestParseEdgeCases:
         assert defn.constants[0].is_constant
 
     def test_default_value(self):
-        from zros2.generator.parsing.parser import parse_msg_text
+        from zros2.generator.parsing._parser import parse_msg_text
 
         text = "int32 x = 42"
         defn = parse_msg_text(text, package="test", type_name="T")
@@ -492,7 +495,7 @@ class TestParseEdgeCases:
         assert defn.fields[0].default == "42"
 
     def test_string_default(self):
-        from zros2.generator.parsing.parser import parse_msg_text
+        from zros2.generator.parsing._parser import parse_msg_text
 
         text = 'string name = "hello"'
         defn = parse_msg_text(text, package="test", type_name="T")
@@ -511,7 +514,7 @@ class TestParseEdgeCases:
                 ],
             ),
         }
-        from zros2.generator.parsing.discovery import validate_dependencies
+        from zros2.generator.parsing._discovery import validate_dependencies
 
         validate_dependencies(types)
 
@@ -520,7 +523,7 @@ class TestTypeMapEdgeCases:
     """Additional coverage for ``_type_map.py``."""
 
     def test_is_primitive(self):
-        from zros2.generator.semantics.resolve_types import is_primitive
+        from zros2.generator.semantics._resolve_types import is_primitive
 
         assert is_primitive("int32")
         assert is_primitive("float64")
@@ -531,7 +534,9 @@ class TestTypeMapEdgeCases:
         assert not is_primitive("string<=128")  # bounded_str
 
     def test_get_default_value(self):
-        from zros2.generator.semantics import get_default_value
+        from zros2.generator.semantics._utilities import (
+            default_expr as get_default_value,
+        )
 
         assert get_default_value("int32") == "0"
         assert get_default_value("float64") == "0.0"
@@ -541,7 +546,7 @@ class TestTypeMapEdgeCases:
         assert get_default_value("std_msgs/msg/Header") == "None"
 
     def test_sequence_with_external_import(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type(
             "sequence<std_msgs/msg/String>",
@@ -551,14 +556,14 @@ class TestTypeMapEdgeCases:
         assert resolved.external_import is not None
 
     def test_unqualified_type_in_same_package(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type("String", current_package="my_pkg")
         assert resolved.external_import is not None
         assert "my_pkg" in resolved.external_import
 
     def test_package_type_without_msg_kind(self):
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type(
             "my_pkg/Header",
@@ -576,11 +581,9 @@ class TestServiceWrapperGeneration:
         import sys
         import tempfile
 
-        from zros2.generator import (
-            collect_all_types,
-            generate_all,
-            write_generated_files,
-        )
+        from zros2.generator.parsing._discovery import collect_all_types
+        from zros2.generator.pipeline._generate import generate_all
+        from zros2.generator.pipeline._writer import write_generated_files
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
@@ -622,9 +625,9 @@ class TestActionWrapperGeneration:
         import pathlib
         import tempfile
 
-        from zros2.generator.codegen.message import GeneratedFile
-        from zros2.generator.codegen.service_action import generate_action_wrappers
-        from zros2.generator.parsing.models import MsgDefinition
+        from zros2.generator.codegen._message import GeneratedFile
+        from zros2.generator.codegen._service_action import generate_action_wrappers
+        from zros2.generator.parsing._models import MsgDefinition
 
         def _make(name: str) -> MsgDefinition:
             return MsgDefinition(
@@ -664,12 +667,12 @@ class TestActionWrapperGeneration:
         import sys
         import tempfile
 
-        from zros2.generator import (
+        from zros2.generator.parsing._discovery import (
+            builtin_msg_dirs,
             collect_all_types,
-            generate_all,
-            write_generated_files,
         )
-        from zros2.generator.parsing.discovery import builtin_msg_dirs
+        from zros2.generator.pipeline._generate import generate_all
+        from zros2.generator.pipeline._writer import write_generated_files
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
@@ -682,7 +685,7 @@ class TestActionWrapperGeneration:
             user = collect_all_types([tmp / "pkg"])
             builtins = collect_all_types(builtin_msg_dirs("humble"))
             merged = {**builtins, **user}
-            from zros2.generator.parsing.discovery import validate_dependencies
+            from zros2.generator.parsing._discovery import validate_dependencies
 
             validate_dependencies(merged)
 
@@ -721,22 +724,22 @@ class TestDefaultExprEdgeCases:
     """Cover edge cases in ``_default_expr``."""
 
     def test_uint8_array_default(self):
-        from zros2.generator.semantics.utilities import default_expr
+        from zros2.generator.semantics._utilities import default_expr
 
         assert default_expr("uint8[]") == "()"
 
     def test_bounded_str_default(self):
-        from zros2.generator.semantics.utilities import default_expr
+        from zros2.generator.semantics._utilities import default_expr
 
         assert default_expr("string<=255") == '""'
 
     def test_time_default(self):
-        from zros2.generator.semantics.utilities import default_expr
+        from zros2.generator.semantics._utilities import default_expr
 
         assert default_expr("time") == "None"
 
     def test_large_import_list(self):
-        from zros2.generator.semantics.utilities import _format_pycdr2_imports
+        from zros2.generator.semantics._utilities import _format_pycdr2_imports
 
         result = _format_pycdr2_imports(
             frozenset({"int32", "float64", "string", "uint8", "sequence"})
@@ -752,7 +755,7 @@ class TestParseParserEdgeCases:
         """A line without a type-name separator is an error with context."""
         import pytest
 
-        from zros2.generator.parsing.parser import parse_msg_text
+        from zros2.generator.parsing._parser import parse_msg_text
 
         text = "invalid_line_without_type_and_name\nint32 x"
         with pytest.raises(ValueError, match="line 1"):
@@ -762,14 +765,14 @@ class TestParseParserEdgeCases:
         """_tokenise_field_line raises ValueError for unparseable lines."""
         import pytest
 
-        from zros2.generator.parsing.parser import _tokenise_field_line
+        from zros2.generator.parsing._parser import _tokenise_field_line
 
         with pytest.raises(ValueError, match="missing field name"):
             _tokenise_field_line("12345")
 
     def test_default_value_trailing_comment_wiped(self):
         """Default value stripped by trailing comment (lines 169-172)."""
-        from zros2.generator.parsing.parser import parse_msg_text
+        from zros2.generator.parsing._parser import parse_msg_text
 
         text = "int32 x = 42 # this is a comment"
         defn = parse_msg_text(text, package="test", type_name="T")
@@ -778,7 +781,7 @@ class TestParseParserEdgeCases:
 
     def test_invalid_srv_missing_separator(self, tmp_path):
         """Invalid .srv file raises ValueError (line 219)."""
-        from zros2.generator.parsing.parser import parse_srv_file
+        from zros2.generator.parsing._parser import parse_srv_file
 
         srv_path = tmp_path / "Bad.srv"
         srv_path.write_text("int64 a\nint64 b\n")
@@ -789,7 +792,7 @@ class TestParseParserEdgeCases:
 
     def test_invalid_action_missing_separators(self, tmp_path):
         """Invalid .action file raises ValueError (line 256)."""
-        from zros2.generator.parsing.parser import parse_action_file
+        from zros2.generator.parsing._parser import parse_action_file
 
         action_path = tmp_path / "Bad.action"
         action_path.write_text("int32 order\n---\nint32[] sequence\n")
@@ -802,14 +805,14 @@ class TestParseParserEdgeCases:
         """find_msg_dirs with non-existent base path (line 347-348)."""
         import pathlib
 
-        from zros2.generator.parsing.discovery import find_msg_dirs
+        from zros2.generator.parsing._discovery import find_msg_dirs
 
         result = find_msg_dirs([pathlib.Path("/nonexistent/path")])
         assert result == []
 
     def test_find_msg_dirs_with_msg_dir(self, tmp_path):
         """find_msg_dirs when base has msg/ subdir (line 351-352)."""
-        from zros2.generator.parsing.discovery import find_msg_dirs
+        from zros2.generator.parsing._discovery import find_msg_dirs
 
         (tmp_path / "msg").mkdir()
         result = find_msg_dirs([tmp_path])
@@ -817,7 +820,7 @@ class TestParseParserEdgeCases:
 
     def test_find_msg_dirs_scans_subdirs(self, tmp_path):
         """find_msg_dirs scans subdirectories for msg/ (lines 355-357)."""
-        from zros2.generator.parsing.discovery import find_msg_dirs
+        from zros2.generator.parsing._discovery import find_msg_dirs
 
         pkg_dir = tmp_path / "my_pkg"
         (pkg_dir / "msg").mkdir(parents=True)
@@ -834,8 +837,8 @@ class TestGeneratorEdgeCases:
         import pathlib
         from unittest import mock
 
-        import zros2.generator.parsing.discovery as disc_mod
-        from zros2.generator.parsing.discovery import builtin_msg_dirs
+        import zros2.generator.parsing._discovery as disc_mod
+        from zros2.generator.parsing._discovery import builtin_msg_dirs
 
         with mock.patch.object(
             disc_mod, "BUILTIN_MSG_DIR", pathlib.Path("/nonexistent")
@@ -845,40 +848,40 @@ class TestGeneratorEdgeCases:
 
     def test_strip_wrappers_sequence(self):
         """_strip_wrappers handles sequence<type> (line 82)."""
-        from zros2.generator.parsing.discovery import _strip_wrappers
+        from zros2.generator.parsing._discovery import _strip_wrappers
 
         assert _strip_wrappers("sequence<uint8>") == "uint8"
 
     def test_resolve_full_name_empty_base(self):
         """_resolve_full_name returns '' when base is empty (line 99)."""
-        from zros2.generator.parsing.discovery import _resolve_full_name
+        from zros2.generator.parsing._discovery import _resolve_full_name
 
         assert _resolve_full_name("", "test") == ""
 
     def test_resolve_full_name_no_slash(self):
         """_resolve_full_name with no / in base (line 110)."""
-        from zros2.generator.parsing.discovery import _resolve_full_name
+        from zros2.generator.parsing._discovery import _resolve_full_name
 
         result = _resolve_full_name("String", "my_pkg")
         assert result == "my_pkg/msg/String"
 
     def test_resolve_full_name_multi_slash(self):
         """_resolve_full_name with >1 / in base (line 116)."""
-        from zros2.generator.parsing.discovery import _resolve_full_name
+        from zros2.generator.parsing._discovery import _resolve_full_name
 
         result = _resolve_full_name("pkg/msg/Sub/Extra", "test")
         assert result == "pkg/msg/Sub/Extra"
 
     def test_resolve_full_name_with_srv(self):
         """_resolve_full_name handles /srv/ in base (line 106-107)."""
-        from zros2.generator.parsing.discovery import _resolve_full_name
+        from zros2.generator.parsing._discovery import _resolve_full_name
 
         result = _resolve_full_name("pkg/srv/Foo", "test")
         assert result == "pkg/srv/Foo"
 
     def test_collect_all_types_with_all_kinds(self, tmp_path):
         """collect_all_types handles msg, srv, and action dirs."""
-        from zros2.generator.parsing.discovery import collect_all_types
+        from zros2.generator.parsing._discovery import collect_all_types
 
         # Create a proper package directory so the name is predictable
         pkg_dir = tmp_path / "my_pkg"
@@ -899,7 +902,7 @@ class TestGeneratorEdgeCases:
         import pathlib
         import tempfile
 
-        from zros2.generator.pipeline.generate import generate_all
+        from zros2.generator.pipeline._generate import generate_all
 
         types = {}
         with tempfile.TemporaryDirectory() as tmp:
@@ -913,8 +916,8 @@ class TestGeneratorEdgeCases:
 
     def test_generate_all_with_existing_init(self, tmp_path):
         """_update_root_init appends to existing root __init__ (lines 204-208)."""
-        from zros2.generator.parsing.models import MsgDefinition, MsgField
-        from zros2.generator.pipeline.generate import generate_all
+        from zros2.generator.parsing._models import MsgDefinition, MsgField
+        from zros2.generator.pipeline._generate import generate_all
 
         types = {
             "pkg/msg/A": MsgDefinition(
@@ -942,7 +945,7 @@ class TestGenCodeEdgeCases:
 
     def test_generate_init_module_empty(self):
         """generate_init_module with empty type_names (line 198)."""
-        from zros2.generator.codegen.package_init import generate_init_module
+        from zros2.generator.codegen._package_init import generate_init_module
 
         result = generate_init_module("pkg", "msg", [])
         # AST-based generation uses "pass" instead of "# (no types)" comment
@@ -950,7 +953,7 @@ class TestGenCodeEdgeCases:
 
     def test_generate_package_init_empty(self):
         """generate_package_init with empty subdirs (line 222)."""
-        from zros2.generator.codegen.package_init import generate_package_init
+        from zros2.generator.codegen._package_init import generate_package_init
 
         result = generate_package_init("pkg", [])
         assert "Package: pkg" in result
@@ -961,21 +964,21 @@ class TestTypeMapEdgeCases2:
 
     def test_is_primitive_with_array_wrapper(self):
         """is_primitive strips array wrappers (line 223)."""
-        from zros2.generator.semantics.resolve_types import is_primitive
+        from zros2.generator.semantics._resolve_types import is_primitive
 
         assert is_primitive("int32[3]")
         assert is_primitive("float64[]")
 
     def test_is_primitive_with_sequence_wrapper(self):
         """is_primitive strips sequence wrappers (line 226)."""
-        from zros2.generator.semantics.resolve_types import is_primitive
+        from zros2.generator.semantics._resolve_types import is_primitive
 
         assert is_primitive("sequence<uint8>")
         assert not is_primitive("sequence<std_msgs/Header>")
 
     def test_resolve_type_unusual_format(self):
         """resolve_type with unusual format without msg/srv/action (lines 200-202)."""
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         # Type with 'msg' not in the path -> falls to else branch
         resolved = resolve_type("my_pkg/SomeType", current_package="test")
@@ -985,7 +988,7 @@ class TestTypeMapEdgeCases2:
 
     def test_resolve_nested_multi_component_type(self):
         """Type with >3 parts and no msg/srv/action keyword."""
-        from zros2.generator.semantics.resolve_types import resolve_type
+        from zros2.generator.semantics._resolve_types import resolve_type
 
         resolved = resolve_type("pkg/sub/DeepType", current_package="test")
         # Falls to else branch: type_name = "/".join(parts[1:]) = "sub/DeepType"
@@ -997,7 +1000,7 @@ class TestCLI:
 
     def test_build_parser(self):
         """build_parser returns a configured ArgumentParser."""
-        from zros2.generator.cli import build_parser
+        from zros2.generator._cli import build_parser
 
         parser = build_parser()
         assert parser is not None
@@ -1007,7 +1010,7 @@ class TestCLI:
         import sys
         from unittest import mock
 
-        from zros2.generator.cli import main
+        from zros2.generator._cli import main
 
         test_args = ["zros2-gen", "--help"]
         with mock.patch.object(sys, "argv", test_args):
@@ -1021,7 +1024,7 @@ class TestCLI:
         import sys
         from unittest import mock
 
-        from zros2.generator.cli import main
+        from zros2.generator._cli import main
 
         test_args = [
             "zros2-gen",
@@ -1043,7 +1046,7 @@ class TestCLI:
         import sys
         from unittest import mock
 
-        from zros2.generator.cli import main
+        from zros2.generator._cli import main
 
         pkg_dir = tmp_path / "test_pkg"
         (pkg_dir / "msg").mkdir(parents=True)
@@ -1067,7 +1070,7 @@ class TestCLI:
         import sys
         from unittest import mock
 
-        from zros2.generator.cli import main
+        from zros2.generator._cli import main
 
         pkg_dir = tmp_path / "test_pkg"
         (pkg_dir / "msg").mkdir(parents=True)
@@ -1095,7 +1098,7 @@ class TestCLI:
         import sys
         from unittest import mock
 
-        from zros2.generator.cli import main
+        from zros2.generator._cli import main
 
         pkg_dir = tmp_path / "test_pkg"
         (pkg_dir / "msg").mkdir(parents=True)
@@ -1120,7 +1123,7 @@ class TestCLI:
         import sys
         from unittest import mock
 
-        from zros2.generator.cli import main
+        from zros2.generator._cli import main
 
         pkg_dir = tmp_path / "broken_pkg"
         (pkg_dir / "msg").mkdir(parents=True)
@@ -1146,7 +1149,7 @@ class TestCLI:
         import sys
         from unittest import mock
 
-        from zros2.generator.cli import main
+        from zros2.generator._cli import main
 
         pkg1 = tmp_path / "pkg_a"
         (pkg1 / "msg").mkdir(parents=True)

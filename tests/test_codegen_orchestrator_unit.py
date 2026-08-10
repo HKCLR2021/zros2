@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator.pipeline.generate``.
+"""Component-level tests for ``zros2.generator.pipeline._generate``.
 
 Tests the generator orchestrator in isolation:
 - ``builtin_msg_dirs`` discovery
@@ -15,8 +15,8 @@ from unittest import mock
 import pytest
 
 from zros2.generator.assets import BUILTIN_MSG_DIR
-from zros2.generator.codegen.message import GeneratedFile
-from zros2.generator.parsing.discovery import (
+from zros2.generator.codegen._message import GeneratedFile
+from zros2.generator.parsing._discovery import (
     VALID_DISTROS,
     _resolve_full_name,
     _strip_wrappers,
@@ -24,9 +24,9 @@ from zros2.generator.parsing.discovery import (
     collect_all_types,
     validate_dependencies,
 )
-from zros2.generator.parsing.models import MsgDefinition, MsgField
-from zros2.generator.pipeline.generate import generate_all
-from zros2.generator.pipeline.writer import write_generated_files
+from zros2.generator.parsing._models import MsgDefinition, MsgField
+from zros2.generator.pipeline._generate import generate_all
+from zros2.generator.pipeline._writer import write_generated_files
 
 # ======================================================================
 # BUILTIN_MSG_DIR / VALID_DISTROS
@@ -70,7 +70,7 @@ class TestBuiltinMsgDirs:
     def test_missing_builtin_dir(self):
         """When BUILTIN_MSG_DIR doesn't exist, returns empty."""
         with mock.patch(
-            "zros2.generator.parsing.discovery.BUILTIN_MSG_DIR",
+            "zros2.generator.parsing._discovery.BUILTIN_MSG_DIR",
             pathlib.Path("/nonexistent"),
         ):
             result = builtin_msg_dirs("humble")

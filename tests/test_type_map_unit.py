@@ -6,14 +6,14 @@ code path, including edge cases for bounded strings, sequences, arrays,
 external imports, and the ``root_package`` prefix logic.
 """
 
-from zros2.generator.parsing.types import TypeInfo
-from zros2.generator.semantics import get_default_value
-from zros2.generator.semantics.resolve_types import (
+from zros2.generator.parsing._types import TypeInfo
+from zros2.generator.semantics._resolve_types import (
     ResolvedType,
     inner_type_str,
     is_primitive,
     resolve_type,
 )
+from zros2.generator.semantics._utilities import default_expr as get_default_value
 
 # ======================================================================
 # inner_type_str

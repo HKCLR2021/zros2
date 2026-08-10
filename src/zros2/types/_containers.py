@@ -2,7 +2,7 @@
 
 These are frozen dataclasses that hold the resolved message classes
 for a service or action interface.  They are the runtime types passed
-to :meth:`ZRosClient.create_srv_client` and
+to :meth:`ZRosClient.create_service_client` and
 :meth:`ZRosClient.create_action_client`.
 """
 

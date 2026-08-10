@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from zros2.generator.pipeline.plan import GenerationPlan, build_plan, execute_plan
+from zros2.generator.pipeline._plan import GenerationPlan, build_plan, execute_plan
 
 
 class TestBuildPlan:
@@ -82,10 +82,10 @@ class TestRootInitUpdate:
 
         We test this indirectly via ``generate_all``: when the output directory
         already contains an ``__init__.py`` that is missing the registry import,
-        ``_update_root_init`` appends it.
+        # ``_update_root_init`` appends it.
         """
-        from zros2.generator.codegen.message import GeneratedFile
-        from zros2.generator.pipeline.generate import _update_root_init
+        from zros2.generator.codegen._message import GeneratedFile
+        from zros2.generator.pipeline._generate import _update_root_init
 
         output_dir = tmp_path / "out"
         output_dir.mkdir(parents=True)
@@ -101,12 +101,10 @@ class TestRootInitUpdate:
 
     def test_root_init_import_already_present(self, tmp_path: pathlib.Path):
         """When root __init__.py already has the registry import, it is not
-        duplicated (the function returns early after the for-loop).
-
-        Covers the early-return path in ``_update_root_init``.
+        duplicated (the function returns early after the for-loop        # Covers the early-return path in ``_update_root_init``.
         """
-        from zros2.generator.codegen.message import GeneratedFile
-        from zros2.generator.pipeline.generate import _update_root_init
+        from zros2.generator.codegen._message import GeneratedFile
+        from zros2.generator.pipeline._generate import _update_root_init
 
         output_dir = tmp_path / "out"
         output_dir.mkdir(parents=True)
@@ -126,12 +124,9 @@ class TestRootInitUpdate:
         assert files[0].content == existing_content
 
     def test_root_init_created_when_missing_from_files(self, tmp_path: pathlib.Path):
-        """When root __init__.py is not in the files list, it is created.
-
-        Covers the file-creation path (lines 260-271).
-        """
-        from zros2.generator.codegen.message import GeneratedFile
-        from zros2.generator.pipeline.generate import _update_root_init
+        """When root __init__.py is not in the files list, it is create        # Covers the file-creation path (lines 260-271)."""
+        from zros2.generator.codegen._message import GeneratedFile
+        from zros2.generator.pipeline._generate import _update_root_init
 
         output_dir = tmp_path / "out"
         output_dir.mkdir(parents=True)

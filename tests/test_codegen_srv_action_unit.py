@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator.codegen.service_action``.
+"""Component-level tests for ``zros2.generator.codegen._service_action``.
 
 Tests the service/action wrapper generation in isolation:
 - ``is_local_import`` self-reference detection
@@ -9,8 +9,8 @@ Tests the service/action wrapper generation in isolation:
 
 import ast
 
-from zros2.generator.codegen.message import GeneratedFile
-from zros2.generator.codegen.service_action import (
+from zros2.generator.codegen._message import GeneratedFile
+from zros2.generator.codegen._service_action import (
     ACTION_SUFFIXES,
     SRV_SUFFIXES,
     generate_action_wrappers,
@@ -19,7 +19,7 @@ from zros2.generator.codegen.service_action import (
     merge_type_modules,
     wrapper_class_ast,
 )
-from zros2.generator.parsing.models import MsgDefinition, MsgField
+from zros2.generator.parsing._models import MsgDefinition, MsgField
 
 # ======================================================================
 # SRV_SUFFIXES / ACTION_SUFFIXES

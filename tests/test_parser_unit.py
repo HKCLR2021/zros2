@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator.parsing.parser`` and ``discovery``.
+"""Component-level tests for ``zros2.generator.parsing._parser`` and ``_discovery``.
 
 Tests every internal function in the parser module in isolation:
 - Inline comment stripping (string-state machine)
@@ -13,13 +13,13 @@ import pathlib
 
 import pytest
 
-from zros2.generator.parsing.discovery import (
+from zros2.generator.parsing._discovery import (
     find_msg_dirs,
     iter_action_files,
     iter_msg_files,
     iter_srv_files,
 )
-from zros2.generator.parsing.parser import (
+from zros2.generator.parsing._parser import (
     _is_valid_constant_name,
     _is_valid_field_name,
     _split_sections,

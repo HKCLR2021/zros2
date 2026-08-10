@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator.codegen.package_init``.
+"""Component-level tests for ``zros2.generator.codegen._package_init``.
 
 Tests the ``__init__.py`` code generators in isolation:
 - ``generate_init_module`` — per-subdirectory init files
@@ -7,7 +7,7 @@ Tests the ``__init__.py`` code generators in isolation:
 
 import ast
 
-from zros2.generator.codegen.package_init import (
+from zros2.generator.codegen._package_init import (
     generate_init_module,
     generate_package_init,
 )

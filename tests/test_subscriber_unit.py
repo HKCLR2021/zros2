@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from zros2.endpoints import Subscriber
-from zros2.endpoints.subscriber import logger
+from zros2.endpoints._subscriber import logger
 from zros2.types import RosMessage
 
 # Fake message types used in tests — they satisfy the type checker at

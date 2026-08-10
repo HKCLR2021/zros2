@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from zros2.types.utils import (
+from zros2.types._utils import (
     _check_type,
     _type_name,
     _unannotate,
@@ -176,7 +176,7 @@ class TestFromAttributes:
 
         partial_hints = {"x": int}  # deliberately omit "y"
 
-        with patch("zros2.types.utils._get_cached_hints", return_value=partial_hints):
+        with patch("zros2.types._utils._get_cached_hints", return_value=partial_hints):
             obj = type("Obj", (), {"x": 10, "y": "hello"})()
             result = from_attributes(_Plain, obj)  # type: ignore[arg-type]
             assert result.x == 10
@@ -281,7 +281,7 @@ class TestCheckType:
                 raise TypeError("parameterized generic")
             return original_isinstance(value, expected)
 
-        with patch("zros2.types.utils.isinstance", _raising_isinstance):
+        with patch("zros2.types._utils.isinstance", _raising_isinstance):
             # ``isinstance([1, 2], list[int])`` raises → origin is ``list`` →
             # ``isinstance([1, 2], list)`` → ``True``
             assert _check_type([1, 2], list[int]) is True
@@ -295,7 +295,7 @@ class TestCheckType:
                 raise TypeError("parameterized generic")
             return original_isinstance(value, expected)
 
-        with patch("zros2.types.utils.isinstance", _raising_isinstance):
+        with patch("zros2.types._utils.isinstance", _raising_isinstance):
             # 42 is not a list, so even the origin check fails
             assert _check_type(42, list[int]) is False
 
@@ -305,7 +305,7 @@ class TestCheckType:
         def _always_raising_isinstance(*args: Any, **kwargs: Any) -> bool:
             raise TypeError("mock")
 
-        with patch("zros2.types.utils.isinstance", _always_raising_isinstance):
+        with patch("zros2.types._utils.isinstance", _always_raising_isinstance):
             # ``isinstance(42, int)`` raises → origin of ``int`` is ``None``
             # → defensive ``return True``
             assert _check_type(42, int) is True

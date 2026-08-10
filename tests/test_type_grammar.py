@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator.parsing.types``.
+"""Component-level tests for ``zros2.generator.parsing._types``.
 
 Tests the Lark-based ROS 2 type expression parser in isolation — every
 ``parse_type()`` code path, every array/sequence/string variant, and all
@@ -8,16 +8,16 @@ edge cases such as malformed input and unexpected tokens.
 import pytest
 from lark import LarkError
 
-from zros2.generator.parsing.types import (
+from zros2.generator.parsing._types import (
+    ROS2_PRIMITIVE_TYPES,
     TypeInfo,
     parse_type,
-    ROS2_PRIMITIVE_TYPES,
 )
-
 
 # ======================================================================
 # ROS2_PRIMITIVE_TYPES
 # ======================================================================
+
 
 class TestROS2PrimitiveTypes:
     """The set of recognised ROS 2 primitive type names."""
@@ -49,6 +49,7 @@ class TestROS2PrimitiveTypes:
 # ======================================================================
 # parse_type() — scalar primitives
 # ======================================================================
+
 
 class TestParseScalarPrimitives:
     """Bare primitive type names (no array suffix, no bounds)."""
@@ -85,6 +86,7 @@ class TestParseScalarPrimitives:
 # ======================================================================
 # parse_type() — string / wstring (unbounded and bounded)
 # ======================================================================
+
 
 class TestParseStringTypes:
     """String and wstring types with and without bounds."""
@@ -140,6 +142,7 @@ class TestParseStringTypes:
 # parse_type() — dynamic arrays (unbounded [])
 # ======================================================================
 
+
 class TestParseUnboundedArrays:
     """``type[]`` — unbounded dynamic arrays."""
 
@@ -169,6 +172,7 @@ class TestParseUnboundedArrays:
 # ======================================================================
 # parse_type() — fixed-size arrays [N]
 # ======================================================================
+
 
 class TestParseFixedArrays:
     """``type[N]`` — fixed-size arrays."""
@@ -206,6 +210,7 @@ class TestParseFixedArrays:
 # parse_type() — bounded dynamic arrays [<=N]
 # ======================================================================
 
+
 class TestParseBoundedArrays:
     """``type[<=N]`` — bounded dynamic arrays."""
 
@@ -233,6 +238,7 @@ class TestParseBoundedArrays:
 # ======================================================================
 # parse_type() — bounded string in bounded array
 # ======================================================================
+
 
 class TestParseBoundedStringInBoundedArray:
     """``string<=M[<=N]`` — compound bounded types."""
@@ -272,6 +278,7 @@ class TestParseBoundedStringInBoundedArray:
 # ======================================================================
 # parse_type() — sequences
 # ======================================================================
+
 
 class TestParseSequences:
     """``sequence<T>`` and ``sequence<T, N>``."""
@@ -315,6 +322,7 @@ class TestParseSequences:
 # ======================================================================
 # parse_type() — nested / qualified identifiers
 # ======================================================================
+
 
 class TestParseNestedTypes:
     """Cross-package type references like ``pkg/Type``."""
@@ -364,6 +372,7 @@ class TestParseStringInPathIdentifiers:
 # ======================================================================
 # parse_type() — edge cases and error handling
 # ======================================================================
+
 
 class TestParseEdgeCases:
     """Unusual but valid inputs, and invalid inputs that must raise."""
@@ -431,6 +440,7 @@ class TestParseEdgeCases:
 # ======================================================================
 # TypeInfo defaults
 # ======================================================================
+
 
 class TestTypeInfoDefaults:
     """The ``TypeInfo`` dataclass default values."""

@@ -1,13 +1,15 @@
-"""Shared TypeVars for ROS 2 message, service, and action generic types.
+"""Base protocol for ROS 2 message types.
 
-All generic type parameters used across the ``types`` subpackage are
-defined here in one place so that ``protocols.py`` and ``containers.py``
-(and any downstream code) can import them without redefinition.
+``RosMessage`` is the structural contract every generated message class
+satisfies: a ``@dataclass`` inheriting from ``pycdr2.IdlStruct`` with CDR
+``serialize`` / ``deserialize`` and plain-dict conversion methods.
+
+Generic type parameters live on each consumer (classes and functions use
+PEP 695 type-parameter syntax, e.g. ``class Publisher[MsgT: RosMessage]``)
+rather than shared module-level TypeVars.
 """
 
-from typing import Any, Protocol, Self, TypeVar, runtime_checkable
-
-# ── Base message protocol (no TypeVar dependencies) ─────────────────
+from typing import Protocol, Self, runtime_checkable
 
 
 @runtime_checkable
@@ -28,45 +30,15 @@ class RosMessage(Protocol):
         ...
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Self:
+    def from_dict(cls, data: dict[str, object]) -> Self:
         """Create a message instance from a plain dictionary."""
         ...
 
     @classmethod
-    def from_attributes(cls, obj: Any) -> Self:
+    def from_attributes(cls, obj: object) -> Self:
         """Create a message instance from an object with matching attributes."""
         ...
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         """Convert this message to a plain dictionary."""
         ...
-
-
-# ── Message TypeVar ─────────────────────────────────────────────────
-# Used by Publisher, Subscriber, and generic message utilities.
-
-MsgT = TypeVar("MsgT", bound=RosMessage)  # Plain ROS message (e.g. String, Twist)
-
-# ── Service TypeVars ────────────────────────────────────────────────
-# Used by RosService protocol and ServiceTypes container.
-
-ReqT = TypeVar("ReqT", bound=RosMessage)  # Service Request
-ResT = TypeVar("ResT", bound=RosMessage)  # Service Response
-
-# ── Action TypeVars ─────────────────────────────────────────────────
-# Used by RosAction protocol and ActionTypes container.
-#
-SGReqT = TypeVar("SGReqT", bound=RosMessage)  # SendGoal_Request
-SGResT = TypeVar("SGResT", bound=RosMessage)  # SendGoal_Response
-GRReqT = TypeVar("GRReqT", bound=RosMessage)  # GetResult_Request
-GRResT = TypeVar("GRResT", bound=RosMessage)  # GetResult_Response
-
-# Backward-compatible aliases for the previous container-specific names.
-_ResGoalT = SGResT
-_GetReqT = GRReqT
-_GetResT = GRResT
-
-FBMsgT = TypeVar("FBMsgT", bound=RosMessage)  # FeedbackMessage
-GoalT = TypeVar("GoalT", bound=RosMessage)  # Goal
-ResultT = TypeVar("ResultT", bound=RosMessage)  # Result
-FeedbackT = TypeVar("FeedbackT", bound=RosMessage)  # Feedback

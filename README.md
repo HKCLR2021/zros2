@@ -16,6 +16,29 @@ middleware. Message types are statically generated from `.msg` / `.srv` /
 `.action` files via the bundled `zros2-gen` code generator and serialized
 with `pycdr2` (CDR).
 
+### Design Positioning
+
+**zros2** is designed to be used **together with `zenoh-plugin-ros2dds` /
+`zenoh-bridge-ros2dds`**: the bridge translates ROS 2 DDS traffic into Zenoh
+on the ROS 2 side, and zros2 is the counterpart implementation on the Zenoh
+side — letting systems that do **not** run ROS 2 communicate directly with
+ROS 2 systems.
+
+- **Interfaces modeled after rclpy** — the client and endpoints follow the
+  structure of the ROS 2 reference implementation, so ROS 2 developers get
+  up to speed almost instantly.
+- **Serialization via pycdr2** — `.msg` / `.srv` / `.action` files are
+  statically compiled into typed Python dataclasses: IDE-friendly, no
+  runtime type-resolution overhead, high performance.
+- **Lightweight by design** — aimed at upper-layer systems (robot
+  applications, cloud services, test frameworks, …) that must talk to ROS 2
+  systems directly without depending on ROS 2 implementations such as rclpy.
+- **Capability boundary** — zros2 provides service / action **client**
+  capabilities only; it deliberately does **not** provide service / action
+  **server** functionality callable from the ROS 2 side (servers are hosted
+  by ROS 2 nodes and exposed through the bridge). This is a design choice,
+  not a missing feature.
+
 ### Features
 
 - **Spec-compliant parser** — `.msg` / `.srv` / `.action` files are fully
@@ -35,6 +58,9 @@ with `pycdr2` (CDR).
   serialisation time.
 - **Protocols for type safety** — `RosMessage`, `RosService`, `RosAction`
   protocols for static type checking.
+- **Optional asyncio facade** — `zros2.asyncio.AsyncRobotClient` adapts
+  the threaded action, service, and liveliness APIs for asyncio
+  consumers, with typed feedback and result events for actions.
 - **Bundled ROS 2 definitions** — built-in types for Humble through Lyrical
   are included; no external download required.
 
@@ -133,10 +159,21 @@ result = srv.send_request(MyService.Request(a=10, b=20))
 ### 4. Actions
 
 Actions are defined via `.action` files (goal / result / feedback sections).
+One `.action` file compiles into a single generated module holding **eight**
+sub-types plus a wrapper class:
+
+| Generated name                                     | Purpose                                           |
+| -------------------------------------------------- | ------------------------------------------------- |
+| `Foo_Goal` / `Foo_Result` / `Foo_Feedback`         | User-facing goal / result / feedback payloads     |
+| `Foo_FeedbackMessage`                              | Feedback transport (goal_id + feedback)           |
+| `Foo_SendGoal_Request` / `Foo_SendGoal_Response`   | Internal SendGoal service pair                    |
+| `Foo_GetResult_Request` / `Foo_GetResult_Response` | Internal GetResult service pair                   |
+| `Foo`                                              | Wrapper class satisfying the `RosAction` protocol |
+
+Pass the wrapper class directly as the action type:
 
 ```python
 from zros2 import Action
-from zros2.types import ActionTypes
 from zros2_msgs.my_package.action import Fibonacci
 
 action = Action(
@@ -146,14 +183,71 @@ action = Action(
     timeout=5000,
 )
 
-# Send a goal and get the result
-goal_handle = action.send_goal(Fibonacci.Goal(order=10))
-result = action.get_result(goal_handle)
+# Send a goal and get the result (each send_goal gets a fresh goal ID)
+handle = action.send_goal(Fibonacci.Goal(order=10))
+result = action.get_result(handle)
 ```
+
+`send_goal` returns a `GoalHandle` carrying the goal's unique 16-byte ID
+and whether the server accepted it. An `Action` instance can be reused
+for multiple goals, and feedback callbacks only receive feedback for
+goals sent through that client (filtered by `goal_id`). Following ROS 2
+semantics, `get_result` blocks until the goal terminates; pass a
+`timeout` in milliseconds to bound the wait (`None` waits indefinitely).
+
+Goals can be cancelled and lifecycle status observed:
+
+```python
+from zros2 import GoalStatus, CancelGoal_Response
+
+# Cancel one goal, or all active goals (returns an ERROR_* code)
+result = action.cancel_goal(handle)
+result = action.cancel_all_goals()
+if result.return_code != CancelGoal_Response.ERROR_NONE:
+    print("cancel failed:", result.return_code)
+
+# Track the goal lifecycle via the /action/status topic
+statuses = []
+action.status_callback = lambda array: statuses.append(array)
+# each array.status_list entry carries a GoalStatus.STATUS_* code
+```
+
+The `action_msgs` message types (`GoalInfo`, `GoalStatus`,
+`GoalStatusArray`, `CancelGoal_Request`, `CancelGoal_Response`) are
+built into zros2 and exported at the top level — cancellation and
+status observation therefore need no generated code at all.
+
+The client talks to the action server over five Zenoh keys:
+
+| Key                            | Direction       | Payload type                                |
+| ------------------------------ | --------------- | ------------------------------------------- |
+| `{action}/_action/send_goal`   | client → server | generated `SendGoal_Request` / `_Response`  |
+| `{action}/_action/get_result`  | client → server | generated `GetResult_Request` / `_Response` |
+| `{action}/_action/cancel_goal` | client → server | built-in `CancelGoal_Request` / `_Response` |
+| `{action}/_action/feedback`    | server → client | generated `FeedbackMessage`                 |
+| `{action}/_action/status`      | server → client | built-in `GoalStatusArray`                  |
+
+Feedback and status subscriptions are **lazy**: the feedback topic is
+subscribed on the first `send_goal` when a `feedback_callback` is set,
+and the status topic only when a `status_callback` is assigned. Use the
+action as a context manager to tear both subscriptions down on exit:
+
+```python
+with action:
+    handle = action.send_goal(Fibonacci.Goal(order=10))
+    result = action.get_result(handle)
+# feedback/status subscriptions released
+```
+
+When using `ZRosClient`, create actions with `client.create_action_client(...)`
+(namespace-aware) — see section 5 below.
 
 Using the `ActionTypes` container:
 
 ```python
+from zros2 import Action
+from zros2.types import ActionTypes
+
 action = Action(
     session,
     action_name="/fibonacci",
@@ -169,6 +263,9 @@ action = Action(
     ),
 )
 ```
+
+For an asyncio-style `async for` stream of feedback and result events,
+see section 10 below.
 
 ### 5. Using the client factory
 
@@ -186,7 +283,7 @@ client = ZRosClient("./zenoh.json5")
 
 pub = client.create_publisher("/chatter", String, namespace="robot_01")
 sub = client.create_subscriber("/battery", String, namespace="robot_01")
-srv = client.create_srv_client(
+srv = client.create_service_client(
     "/add", MyService,
     namespace="robot_01",
 )
@@ -198,6 +295,32 @@ act = client.create_action_client(
 
 All factory methods require an explicit `namespace` argument. Pass
 `namespace=""` to use un-namespaced topics.
+
+`ZRosClient` owns the Zenoh session. Release it with `close()`
+(idempotent — safe to call multiple times) or use the client as a
+context manager:
+
+```python
+with ZRosClient("./zenoh.json5") as client:
+    ...
+# session closed on exit
+```
+
+Service availability can be probed through Zenoh liveliness tokens
+(no service type class needed) — the server declares a `SERVICE_SERVER`
+token for its name, and the probe matches **both** name and type:
+
+```python
+# Blocks until a server of this exact type appears
+# (timeout_ms=None waits indefinitely)
+srv_type = MyService.__ros_name__  # e.g. "my_pkg/srv/MyService"
+if not client.wait_for_service("/add", srv_type, timeout_ms=5000):
+    raise TimeoutError("service not available")
+
+# Non-blocking probe
+if client.service_is_ready("/add", srv_type):
+    result = srv.send_request(MyService.Request(a=10, b=20))
+```
 
 ### 6. Runtime reflection
 
@@ -230,15 +353,14 @@ d = msg.to_dict()              # {"data": "hello"}
 restored = String.from_dict(d)
 ```
 
-For converting from arbitrary attribute-based objects:
+Messages also provide `from_attributes()` for converting from arbitrary
+attribute-based objects:
 
 ```python
-from zros2.types import from_attributes
-
 class Obj:
     data = "world"
 
-restored = from_attributes(String, Obj)
+restored = String.from_attributes(Obj)
 ```
 
 ### 8. Liveliness & Discovery
@@ -246,14 +368,12 @@ restored = from_attributes(String, Obj)
 Monitor ROS 2 entity presence over Zenoh:
 
 ```python
-from zros2 import Liveliness, LivelinessType, Qos
-from zros2._session import ZenohSessionProxy
+from zros2 import LivelinessType, Qos, ZRosClient
 
-proxy = ZenohSessionProxy(zenoh_session)
+client = ZRosClient("./zenoh.json5")
 
 # Discover all publishers on /chatter
-lv = Liveliness(
-    proxy,
+lv = client.create_liveliness(
     LivelinessType.PUBLISHER,
     name="/chatter",
     ros2_type="std_msgs/msg/String",
@@ -272,7 +392,7 @@ lv.subscribe(lambda sample: print(f"Entity changed: {sample}"))
 All zros2 exceptions inherit from `ZRos2Exception`:
 
 ```python
-from zros2 import (
+from zros2.exceptions import (
     ZRos2Exception,
     ServiceException,
     ServiceNotAvailableException,
@@ -291,6 +411,102 @@ except ServiceInvokeException:
 except ServiceException:
     print("Generic service error")
 ```
+
+### 10. Async invocation (`zros2.asyncio`)
+
+The core zros2 API is synchronous. For asyncio applications, the
+optional `zros2.asyncio` subpackage adapts the threaded clients into
+the event loop: blocking calls run in worker threads, so actions and
+topic streams can be consumed with `async for` and service calls can
+be awaited directly.
+`AsyncRobotClient` binds a `ZRosClient` (or session proxy) once, so
+repeated invocations do not need to thread the client through every
+call.
+
+```python
+from zros2 import ZRosClient
+from zros2.asyncio import ActionFeedback, ActionResult, AsyncRobotClient
+from zros2_msgs.my_package.action import Fibonacci
+from zros2_msgs.my_package.srv import QueryTrajectory
+
+client = ZRosClient("./zenoh.json5")
+zros = AsyncRobotClient(client)
+
+async def run() -> None:
+    # Service call: returns the typed response dataclass.
+    response = await zros.invoke_service(
+        "/query_trajectory", QueryTrajectory,
+        timeout=5000,
+        namespace="robot_01",
+    )
+
+    # Action: yields feedback updates, then the final result.
+    async for event in zros.invoke_action(
+        "/fib", Fibonacci,
+        goal=Fibonacci.Goal(order=10),
+        namespace="robot_01",
+    ):
+        if isinstance(event, ActionFeedback):
+            print("feedback:", event.feedback)
+        elif isinstance(event, ActionResult):
+            print("status:", event.status, "result:", event.result)
+```
+
+`invoke_action` yields an `ActionFeedback` for every update and finally
+one `ActionResult`. It raises `ActionInvokeException` when the goal is
+rejected or a send-goal / get-result service call fails. Feedback is
+dropped (bounded queue, oldest first) when the consumer is slower than
+the server. `invoke_service` returns the typed response (or an empty
+request when `body` is `None`) and raises the regular
+`ServiceInvokeException` / `ServiceNotAvailableException` on failure.
+
+For entity discovery, `query_liveliness` runs the blocking liveliness
+query on a worker thread and returns the currently alive entities,
+while `watch_liveliness` bridges the Zenoh-thread subscription
+callback into an `async for` stream of changes (call `query_liveliness`
+first for the snapshot):
+
+```python
+from zros2 import LivelinessType
+
+async def monitor() -> None:
+    alive = await zros.query_liveliness(
+        LivelinessType.SERVICE_SERVER,
+        name="/trigger", ros2_type="std_srvs/srv/Trigger",
+        namespace="robot_01",
+    )
+    async for sample in zros.watch_liveliness(
+        LivelinessType.ACTION_SERVER, namespace="robot_01"
+    ):
+        print("change:", sample)
+```
+
+Publish / subscribe is available through the `AsyncPublisher` and
+`AsyncSubscriber` endpoints, created by the same factory methods the
+sync client exposes:
+
+```python
+from zros2_msgs.std_msgs.msg import String
+
+async def pubsub() -> None:
+    # Async publish: declare once, publish many — blocking work runs
+    # on worker threads.
+    pub = zros.create_publisher("/chatter", String, namespace="robot_01")
+    await pub.publish(String(data="hello"))
+    await pub.aclose()  # idempotent
+
+    # Async subscribe: async-for stream bridged from Zenoh threads.
+    sub = zros.create_subscriber("/battery", String, namespace="robot_01")
+    async for msg in sub:  # subscribes lazily on first iteration
+        print("received:", msg.data)
+        break
+    await sub.aclose()
+```
+
+Like the liveliness watcher, the subscriber forwards messages through a
+bounded queue — entries are dropped (oldest first) when the consumer is
+slower than the topic. `aclose()` ends the stream and undeclares the
+subscription.
 
 ---
 
@@ -319,27 +535,36 @@ The `zros2-gen` generator parses ROS 2 interface files per the
 
 The `zros2.types` subpackage defines the structural type system:
 
-| Protocol / Type          | Purpose                                                                                                                     |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `RosMessage`             | Base protocol for all message dataclasses (`serialize()`, `deserialize()`, `to_dict()`, `from_dict()`, `from_attributes()`) |
-| `RosService[ReqT, ResT]` | Protocol for service types (requires `ClassVar` members `Request` and `Response`)                                           |
-| `RosAction[...]`         | Protocol for action types (8 `ClassVar` message members)                                                                    |
-| `ServiceTypes`           | Frozen dataclass container holding `Request` and `Response` types                                                           |
-| `ActionTypes`            | Frozen dataclass container holding all 8 action message types                                                               |
-| `SendGoalRequest[GoalT]` | Protocol for action `SendGoal` request messages                                                                             |
-| `GetResultRequest`       | Protocol for action `GetResult` request messages                                                                            |
+| Protocol / Type                            | Purpose                                                                                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `RosMessage`                               | Base protocol for all message dataclasses (`serialize()`, `deserialize()`, `to_dict()`, `from_dict()`, `from_attributes()`) |
+| `RosService[ReqT, ResT]`                   | Protocol for service types (requires `ClassVar` members `Request` and `Response`)                                           |
+| `RosAction[...]`                           | Protocol for action types (8 `ClassVar` message members)                                                                    |
+| `RosActionView[GoalT, ResultT, FeedbackT]` | Semantic action view — the 3 user-facing message types, hiding transport sub-types (`SendGoal_*`, `GetResult_*`)            |
+| `ServiceTypes`                             | Frozen dataclass container holding `Request` and `Response` types                                                           |
+| `ActionTypes`                              | Frozen dataclass container holding all 8 action message types                                                               |
 
-### TypeVars
+### Generics
 
-Generic TypeVars are exported from `zros2.types` for type-safe generic code:
+Generic classes and functions declare their type parameters locally with
+PEP 695 syntax, bound to `RosMessage` — no shared TypeVars are exported:
 
-| TypeVar                                | Bound        | Used by                       |
-| -------------------------------------- | ------------ | ----------------------------- |
-| `MsgT`                                 | `RosMessage` | `Publisher`, `Subscriber`     |
-| `ReqT`, `ResT`                         | `RosMessage` | `ServiceClient`, `RosService` |
-| `SGReqT`, `SGResT`, `GRReqT`, `GRResT` | `RosMessage` | Action request/response       |
-| `GoalT`, `ResultT`, `FeedbackT`        | `RosMessage` | Action goal/result/feedback   |
-| `FBMsgT`                               | `RosMessage` | Action `FeedbackMessage`      |
+```python
+from zros2.types import RosMessage
+
+# Class-level: declare once, reference by name in methods
+class ActionInvoker[
+    GoalT: RosMessage, ResultT: RosMessage, FeedbackT: RosMessage,
+]: ...
+
+# Function-level
+async def observe_action[
+    GoalT: RosMessage, ResultT: RosMessage, FeedbackT: RosMessage,
+](
+    action_type: type[RosActionView[GoalT, ResultT, FeedbackT]],
+    goal: GoalT | None = None,
+) -> None: ...
+```
 
 ---
 
@@ -391,20 +616,25 @@ usage: zros2-gen [-h] --msg-dirs MSG_DIRS --output OUTPUT
 
 ```python
 from zros2.generator.parsing import parse_msg_text, MsgDefinition
-from zros2.generator.semantics import resolve_type, get_default_value, is_primitive
+from zros2.generator.semantics import resolve_type
 from zros2.generator.codegen import (
     generate_message_module,
     generate_init_module,
     generate_stub_module,
     GeneratedFile,
 )
-from zros2.generator.pipeline import (
-    build_plan,
-    execute_plan,
-    generate_all,
-    write_generated_files,
-)
+from zros2.generator.pipeline import generate_all
 ```
+
+### Codegen ↔ runtime ABI
+
+Generated modules hardcode imports of a small set of runtime symbols:
+`zros2.types` (`RosMessage`, `ServiceTypes`, `ActionTypes`) and
+`zros2.types._utils` (`from_attributes`). Those references form a
+**generation ABI** — renaming or moving a symbol breaks already-
+generated code, so the two sides are pinned to each other by the
+`RUNTIME_CONTRACT` whitelist in `tests/test_runtime_contract.py`.
+Change the whitelist in the same change that moves either side.
 
 ---
 

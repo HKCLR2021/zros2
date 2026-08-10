@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator.codegen.message``.
+"""Component-level tests for ``zros2.generator.codegen._message``.
 
 Tests the core message module code generator in isolation:
 - ``GeneratedFile`` data type
@@ -15,13 +15,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-from zros2.generator.codegen.message import (
+from zros2.generator.codegen._message import (
     GeneratedFile,
     _needs_optional_annotation,
     generate_message_module,
     registry_import,
 )
-from zros2.generator.parsing.models import MsgDefinition, MsgField
+from zros2.generator.parsing._models import MsgDefinition, MsgField
 
 # ═══════════════════════════════════════════════════════════════════════
 # Generated module loader — uses importlib instead of exec
@@ -1157,7 +1157,7 @@ class TestCodegenRobustness:
 
     def test_is_container_type_true(self):
         """Array/sequence type strings return True."""
-        from zros2.generator.codegen.message import _is_container_type
+        from zros2.generator.codegen._message import _is_container_type
 
         assert _is_container_type("int32[]") is True
         assert _is_container_type("float64[3]") is True
@@ -1167,7 +1167,7 @@ class TestCodegenRobustness:
 
     def test_is_container_type_false(self):
         """Scalar type strings return False."""
-        from zros2.generator.codegen.message import _is_container_type
+        from zros2.generator.codegen._message import _is_container_type
 
         assert _is_container_type("int32") is False
         assert _is_container_type("float64") is False
@@ -1176,7 +1176,7 @@ class TestCodegenRobustness:
 
     def test_is_container_type_malformed(self):
         """Unparseable type strings return False without crashing."""
-        from zros2.generator.codegen.message import _is_container_type
+        from zros2.generator.codegen._message import _is_container_type
 
         assert _is_container_type("") is False
         assert _is_container_type("int32[") is False
@@ -1187,8 +1187,8 @@ class TestCodegenRobustness:
         """Empty or malformed type_name raises ValueError."""
         import pytest
 
-        from zros2.generator.codegen.message import generate_message_module
-        from zros2.generator.parsing.models import MsgDefinition
+        from zros2.generator.codegen._message import generate_message_module
+        from zros2.generator.parsing._models import MsgDefinition
 
         with pytest.raises(ValueError, match="Invalid type_name"):
             generate_message_module(

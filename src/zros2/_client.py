@@ -7,47 +7,22 @@ Pass ``namespace=""`` to use unnamespaced topics.
 """
 
 import os
+import time
 import types
 
 import zenoh
 
 from ._session import ZenohSessionProxy
-from .discovery import Liveliness, LivelinessType, Qos
-from .endpoints import Action, Publisher, ServiceClient, Subscriber
-from .types import (
-    FBMsgT as _FBMsgT,
-)
-from .types import (
-    FeedbackT as _FeedbackT,
-)
-from .types import (
-    GoalT as _GoalT,
-)
-from .types import (
-    GRReqT as _GRReqT,
-)
-from .types import (
-    GRResT as _GRResT,
-)
-from .types import (
-    MsgT as _MsgT,
-)
-from .types import (
-    ReqT as _ReqT,
-)
-from .types import (
-    ResT as _ResT,
-)
-from .types import (
-    ResultT as _ResultT,
-)
-from .types import RosAction, RosService
-from .types import (
-    SGReqT as _SGReqT,
-)
-from .types import (
-    SGResT as _SGResT,
-)
+from .discovery._liveliness import Liveliness, LivelinessType
+from .discovery._qos import Qos
+from .endpoints._action import Action
+from .endpoints._publisher import Publisher
+from .endpoints._service import ServiceClient
+from .endpoints._subscriber import Subscriber
+from .types._base import RosMessage
+from .types._protocols import RosAction, RosService
+
+_SERVICE_POLL_INTERVAL = 0.1  # seconds between availability polls
 
 
 class ZRosClient:
@@ -72,10 +47,6 @@ class ZRosClient:
         self,
         config: str | zenoh.Config,
     ):
-        if not isinstance(config, (str, zenoh.Config)):
-            raise TypeError(
-                f"Expected str or zenoh.Config, got {type(config).__name__}"
-            )
         if isinstance(config, str):
             if not os.path.exists(config):
                 raise FileNotFoundError("Zenoh Config file not found")
@@ -101,8 +72,17 @@ class ZRosClient:
         exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
-        """Exit the context manager and clean up Zenoh resources."""
-        self._zenoh_session.__exit__(exc_type, exc_val, exc_tb)
+        """Exit the context manager and close the Zenoh session."""
+        self.close()
+
+    def close(self) -> None:
+        """Close the underlying Zenoh session.
+
+        Idempotent — safe to call multiple times; the context manager
+        calls it on exit.
+        """
+        if not self._zenoh_session.is_closed():
+            self._zenoh_session.close()
 
     @property
     def session(self) -> ZenohSessionProxy:
@@ -115,13 +95,13 @@ class ZRosClient:
 
     # ── Publisher ────────────────────────────────────────────────────
 
-    def create_publisher(
+    def create_publisher[MsgT: RosMessage](
         self,
         topic: str,
-        message_type: type[_MsgT],
+        message_type: type[MsgT],
         *,
         namespace: str = "",
-    ) -> Publisher[_MsgT]:
+    ) -> Publisher[MsgT]:
         """Create a publisher for publish-subscribe communication.
 
         Args:
@@ -137,13 +117,13 @@ class ZRosClient:
 
     # ── Subscriber ───────────────────────────────────────────────────
 
-    def create_subscriber(
+    def create_subscriber[MsgT: RosMessage](
         self,
         topic: str,
-        message_type: type[_MsgT],
+        message_type: type[MsgT],
         *,
         namespace: str = "",
-    ) -> Subscriber[_MsgT]:
+    ) -> Subscriber[MsgT]:
         """Create a subscriber for publish-subscribe communication.
 
         Args:
@@ -159,13 +139,13 @@ class ZRosClient:
 
     # ── Service Client ───────────────────────────────────────────────
 
-    def create_srv_client(
+    def create_service_client[ReqT: RosMessage, ResT: RosMessage](
         self,
         service_name: str,
-        service_type: type[RosService[_ReqT, _ResT]],
+        service_type: type[RosService[ReqT, ResT]],
         *,
         namespace: str = "",
-    ) -> ServiceClient[_ReqT, _ResT]:
+    ) -> ServiceClient[ReqT, ResT]:
         """Create a service client for request-response communication.
 
         Args:
@@ -181,29 +161,113 @@ class ZRosClient:
         full = f"{namespace}/{service_name.lstrip('/')}" if namespace else service_name
         return ServiceClient(self._session_proxy, full, service_type)
 
+    # ── Service readiness ───────────────────────────────────────────────
+
+    def service_is_ready(
+        self,
+        service_name: str,
+        ros2_type: str,
+        *,
+        namespace: str = "",
+    ) -> bool:
+        """Return whether a service server is currently alive.
+
+        Detection uses the liveliness token that servers declare for
+        ``LivelinessType.SERVICE_SERVER`` — the match is exact on both
+        name and type, so a server of a different type never counts as
+        ready.  Pass the type string explicitly, e.g.
+        ``MyService.__ros_name__`` (``"my_pkg/srv/MyService"``).  Service
+        liveliness keys carry no QoS, so no ``qos`` parameter exists.
+
+        Args:
+            service_name: Name of the service (without prefix).
+            ros2_type: ROS 2 type string of the expected service
+                (e.g. ``"my_pkg/srv/MyService"``).
+            namespace: Device namespace.  Empty string means no namespace.
+
+        Returns:
+            True if a server with this exact name and type is alive.
+        """
+        liveliness = self.create_liveliness(
+            LivelinessType.SERVICE_SERVER,
+            name=service_name,
+            ros2_type=ros2_type,
+            namespace=namespace,
+        )
+        return bool(liveliness.get())
+
+    def wait_for_service(
+        self,
+        service_name: str,
+        ros2_type: str,
+        timeout_ms: int | None = None,
+        *,
+        namespace: str = "",
+    ) -> bool:
+        """Block until a service server with the given type is available.
+
+        The match is exact on both name and type (no wildcards).  Pass
+        the type string explicitly, e.g. ``MyService.__ros_name__``.
+
+        Args:
+            service_name: Name of the service (without prefix).
+            ros2_type: ROS 2 type string of the expected service
+                (e.g. ``"my_pkg/srv/MyService"``).
+            timeout_ms: Timeout in **milliseconds**.  ``None`` waits
+                indefinitely (default).
+            namespace: Device namespace.  Empty string means no namespace.
+
+        Returns:
+            True if a matching server appeared within the timeout, False
+            otherwise.
+        """
+        liveliness = self.create_liveliness(
+            LivelinessType.SERVICE_SERVER,
+            name=service_name,
+            ros2_type=ros2_type,
+            namespace=namespace,
+        )
+        if timeout_ms is None:
+            while not liveliness.get():
+                time.sleep(_SERVICE_POLL_INTERVAL)
+            return True
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while time.monotonic() < deadline:
+            if liveliness.get():
+                return True
+            time.sleep(_SERVICE_POLL_INTERVAL)
+        return bool(liveliness.get())
+
     # ── Action Client ────────────────────────────────────────────────
 
-    def create_action_client(
+    def create_action_client[
+        SGReqT: RosMessage,
+        SGResT: RosMessage,
+        GRReqT: RosMessage,
+        GRResT: RosMessage,
+        FBMsgT: RosMessage,
+        GoalT: RosMessage,
+        ResultT: RosMessage,
+        FeedbackT: RosMessage,
+    ](
         self,
         action_name: str,
         action_type: type[
             RosAction[
-                _SGReqT,
-                _SGResT,
-                _GRReqT,
-                _GRResT,
-                _FBMsgT,
-                _GoalT,
-                _ResultT,
-                _FeedbackT,
+                SGReqT,
+                SGResT,
+                GRReqT,
+                GRResT,
+                FBMsgT,
+                GoalT,
+                ResultT,
+                FeedbackT,
             ]
         ],
         timeout: int | None = None,
         *,
         namespace: str = "",
-    ) -> Action[
-        _SGReqT, _SGResT, _GRReqT, _GRResT, _FBMsgT, _GoalT, _ResultT, _FeedbackT
-    ]:
+    ) -> Action[SGReqT, SGResT, GRReqT, GRResT, FBMsgT, GoalT, ResultT, FeedbackT]:
         """Create an action client for long-running tasks.
 
         Args:
@@ -217,7 +281,8 @@ class ZRosClient:
         Returns:
             Action: Configured action client instance.
         """
-        timeout = timeout or 3000
+        if timeout is None:
+            timeout = 3000
         full = f"{namespace}/{action_name.lstrip('/')}" if namespace else action_name
         return Action(self._session_proxy, full, action_type, timeout)
 

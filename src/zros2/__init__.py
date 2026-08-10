@@ -1,44 +1,50 @@
 """zros2 — lightweight ROS2-like communication over Zenoh."""
 
-from zenoh import Sample, SampleKind
+from zenoh import Reply, Sample, SampleKind
 
-from ._client import ZRosClient
-from ._session import ZenohSessionProxy
-from .discovery import Liveliness, LivelinessType, Qos
-from .endpoints import Action, Publisher, ServiceClient, Subscriber
-from .exceptions import (
-    ActionException,
-    ActionInvokeException,
-    ActionNotAvailableException,
-    ServiceException,
-    ServiceInvokeException,
-    ServiceNotAvailableException,
-    ZRos2Exception,
+from . import exceptions
+from ._action_msgs import (
+    CancelGoal_Request,
+    CancelGoal_Response,
+    GoalInfo,
+    GoalStatus,
+    GoalStatusArray,
 )
-from .types import ActionTypes, RosAction, RosMessage, RosService, ServiceTypes
+from ._client import ZRosClient
+from .discovery import Liveliness, LivelinessType, Qos
+from .endpoints import Action, GoalHandle, Publisher, ServiceClient, Subscriber
+from .types import (
+    ActionTypes,
+    RosAction,
+    RosActionView,
+    RosMessage,
+    RosService,
+    ServiceTypes,
+)
 
 __all__ = [
     "Action",
-    "ActionException",
-    "ActionInvokeException",
-    "ActionNotAvailableException",
     "ActionTypes",
+    "CancelGoal_Request",
+    "CancelGoal_Response",
+    "GoalHandle",
+    "GoalInfo",
+    "GoalStatus",
+    "GoalStatusArray",
     "Liveliness",
     "LivelinessType",
     "Publisher",
     "Qos",
+    "Reply",
     "RosAction",
+    "RosActionView",
     "RosMessage",
     "RosService",
     "Sample",
     "SampleKind",
     "ServiceClient",
-    "ServiceException",
-    "ServiceInvokeException",
-    "ServiceNotAvailableException",
     "ServiceTypes",
     "Subscriber",
-    "ZRos2Exception",
     "ZRosClient",
-    "ZenohSessionProxy",
+    "exceptions",
 ]

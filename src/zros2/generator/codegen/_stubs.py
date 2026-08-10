@@ -35,9 +35,9 @@ Why ``kw_defaults`` must match ``kwonlyargs`` length
 import ast
 import re
 
-from ..parsing.models import MsgDefinition, MsgField
-from ..semantics.resolve_types import resolve_type
-from ..semantics.utilities import (
+from ..parsing._models import MsgDefinition, MsgField
+from ..semantics._resolve_types import resolve_type
+from ..semantics._utilities import (
     default_expr,
     generated_metadata_stmts,
     header_comment,

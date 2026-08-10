@@ -14,7 +14,19 @@ class Qos:
     user_data: bytes | None = None
 
     def to_key_expr(self, keyless: bool = True) -> str:
-        """Serialize this QoS into a key-expression-compatible string."""
+        """Serialize this QoS into a key-expression-compatible string.
+
+        An unconstrained QoS (every field ``None``) serializes to ``"*"`` —
+        the wildcard that matches any QoS.
+        """
+        if (
+            self.reliability is None
+            and self.durability is None
+            and self.history_kind is None
+            and self.history_depth is None
+            and self.user_data is None
+        ):
+            return "*"
         parts: list[str] = ["", "", "", ""]
 
         if not keyless:
@@ -53,10 +65,14 @@ class Qos:
 
         return keyless, qos
 
-    @staticmethod
-    def any() -> str:
-        """Return a wildcard key expression that matches any QoS."""
-        return "*"
+    @classmethod
+    def any(cls) -> "Qos":
+        """Return a wildcard QoS value that matches any QoS.
+
+        The returned value has no constraints and serializes to ``"*"``
+        in key expressions.
+        """
+        return cls()
 
 
 __all__ = ["Qos"]

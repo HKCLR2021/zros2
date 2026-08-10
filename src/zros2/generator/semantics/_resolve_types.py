@@ -3,7 +3,7 @@
 Resolves ROS 2 type strings (as found in ``.msg`` files) to their
 corresponding pycdr2 annotation expressions and Python import paths.
 
-Type expressions are parsed via :mod:`zros2.generator.parsing.types`
+Type expressions are parsed via :mod:`zros2.generator.parsing._types`
 (Lark-based) instead of regex, ensuring all valid ROS 2 syntax forms are
 recognised.
 """
@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 from lark import LarkError
 
-from ..parsing.types import ROS2_PRIMITIVE_TYPES, TypeInfo, parse_type
-from .utilities import to_snake_case
+from ..parsing._types import ROS2_PRIMITIVE_TYPES, TypeInfo, parse_type
+from ._utilities import to_snake_case
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Internal helpers

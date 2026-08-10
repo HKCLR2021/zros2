@@ -59,14 +59,14 @@ default-value assignments).
 import ast
 import pathlib
 
-from ..parsing.models import MsgDefinition
-from ..semantics.utilities import (
+from ..parsing._models import MsgDefinition
+from ..semantics._utilities import (
     generated_metadata_stmts,
     header_comment,
     to_snake_case,
 )
-from .message import GeneratedFile, generate_message_module, registry_import
-from .stubs import generate_stub_module
+from ._message import GeneratedFile, generate_message_module, registry_import
+from ._stubs import generate_stub_module
 
 # ---------------------------------------------------------------------------
 # Suffix constants

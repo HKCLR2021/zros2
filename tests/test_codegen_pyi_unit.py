@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator.codegen.stubs``.
+"""Component-level tests for ``zros2.generator.codegen._stubs``.
 
 Tests the stub (``.pyi``) generator in isolation:
 - ``_stub_annotation`` type translation
@@ -10,11 +10,11 @@ Tests the stub (``.pyi``) generator in isolation:
 import ast
 import hashlib
 
-from zros2.generator.codegen.stubs import (
+from zros2.generator.codegen._stubs import (
     _stub_annotation,
     generate_stub_module,
 )
-from zros2.generator.parsing.models import MsgDefinition, MsgField
+from zros2.generator.parsing._models import MsgDefinition, MsgField
 
 # ======================================================================
 # _stub_annotation — CDR annotation → pure-Python type hint
@@ -432,8 +432,8 @@ class TestMakeStubField:
     """Direct tests for the ``_make_stub_field`` helper."""
 
     def test_primitive_field(self):
-        from zros2.generator.codegen.stubs import _make_stub_field
-        from zros2.generator.parsing.models import MsgDefinition, MsgField
+        from zros2.generator.codegen._stubs import _make_stub_field
+        from zros2.generator.parsing._models import MsgDefinition, MsgField
 
         field = MsgField(name="x", type_str="int32")
         defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
@@ -443,8 +443,8 @@ class TestMakeStubField:
         assert not needs_seq
 
     def test_sequence_field(self):
-        from zros2.generator.codegen.stubs import _make_stub_field
-        from zros2.generator.parsing.models import MsgDefinition, MsgField
+        from zros2.generator.codegen._stubs import _make_stub_field
+        from zros2.generator.parsing._models import MsgDefinition, MsgField
 
         field = MsgField(name="data", type_str="sequence<uint8>")
         defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
@@ -453,8 +453,8 @@ class TestMakeStubField:
         assert needs_seq
 
     def test_field_with_default(self):
-        from zros2.generator.codegen.stubs import _make_stub_field
-        from zros2.generator.parsing.models import MsgDefinition, MsgField
+        from zros2.generator.codegen._stubs import _make_stub_field
+        from zros2.generator.parsing._models import MsgDefinition, MsgField
 
         field = MsgField(name="x", type_str="int32", default="42")
         defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
@@ -462,8 +462,8 @@ class TestMakeStubField:
         assert "= 42" in line
 
     def test_nested_field_has_no_default_suffix(self):
-        from zros2.generator.codegen.stubs import _make_stub_field
-        from zros2.generator.parsing.models import MsgDefinition, MsgField
+        from zros2.generator.codegen._stubs import _make_stub_field
+        from zros2.generator.parsing._models import MsgDefinition, MsgField
 
         field = MsgField(name="header", type_str="std_msgs/msg/Header")
         defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")

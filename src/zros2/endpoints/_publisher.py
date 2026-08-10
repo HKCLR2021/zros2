@@ -6,7 +6,7 @@ from contextlib import suppress
 import zenoh
 
 from .._session import ZenohSessionProxy
-from ..types import RosMessage
+from ..types._base import RosMessage
 
 
 class Publisher[MsgT: RosMessage]:

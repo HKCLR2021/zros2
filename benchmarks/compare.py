@@ -12,13 +12,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from zros2.generator.codegen.message import generate_message_module
-from zros2.generator.parsing.models import MsgDefinition, MsgField
+from zros2.generator.codegen._message import generate_message_module
+from zros2.generator.parsing._models import MsgDefinition, MsgField
 
 # ── Reflective helpers (benchmark reference) ─────────────────────────
 # These mimic the generated hardcoded methods for comparison.
 # They are defined locally because the reflective utility functions
-# were removed from zros2.types.utils in favor of generated methods.
+# were removed from zros2.types._utils in favor of generated methods.
 
 
 def _ref_to_dict(obj: Any) -> dict[str, object]:

@@ -1,4 +1,4 @@
-"""Component-level tests for ``zros2.generator.codegen.registry``.
+"""Component-level tests for ``zros2.generator.codegen._registry``.
 
 Tests the pre-built registry AST in isolation:
 - The ``_REGISTRY_AST`` module-level constant unparses to valid Python
@@ -7,7 +7,7 @@ Tests the pre-built registry AST in isolation:
 
 import ast
 
-from zros2.generator.codegen.registry import (
+from zros2.generator.codegen._registry import (
     REGISTRY_AST,
     _reg_action_section,
     _reg_header,
