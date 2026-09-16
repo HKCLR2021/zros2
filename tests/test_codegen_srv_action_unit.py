@@ -9,7 +9,7 @@ Tests the service/action wrapper generation in isolation:
 
 import ast
 
-from zros2.generator.codegen._message import GeneratedFile
+from zros2.generator.codegen._file import GeneratedFile
 from zros2.generator.codegen._service_action import (
     ACTION_SUFFIXES,
     SRV_SUFFIXES,

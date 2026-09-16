@@ -66,7 +66,8 @@ from ..semantics._utilities import (
     header_comment,
     to_snake_case,
 )
-from ._message import GeneratedFile, generate_message_module, registry_import
+from ._file import GeneratedFile
+from ._message import generate_message_module, registry_import
 from ._stubs import generate_stub_module
 
 # ---------------------------------------------------------------------------

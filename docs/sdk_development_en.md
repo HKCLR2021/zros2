@@ -80,9 +80,15 @@ zros2-gen \
   --output ./zros2_msgs
 ```
 
+`--msg-dirs` also accepts a workspace root (immediate children that contain `msg/`, `srv/`, or `action/`):
+
+```bash
+zros2-gen --msg-dirs ./my_msgs --ros-version humble --output ./zros2_msgs
+```
+
 | Option            | Description                                                                                                    |
 | ----------------- | -------------------------------------------------------------------------------------------------------------- |
-| `--msg-dirs`      | One or more ROS 2 package directories containing `msg/`, `srv/`, `action/` subfolders                          |
+| `--msg-dirs`      | One or more ROS 2 package directories (`msg/`, `srv/`, and/or `action/`), or a workspace of such packages      |
 | `--output` / `-o` | Output directory for generated Python sources                                                                  |
 | `--ros-version`   | ROS 2 distro that decides which built-in types are bundled: `humble` / `iron` / `jazzy` / `kilted` / `lyrical` |
 | `--root-package`  | Top-level package name (defaults to the output dir name; pass `--root-package ""` to drop the prefix)          |
@@ -102,16 +108,20 @@ Generated code imports a fixed set of zros2 runtime symbols (the generation ABI)
 
 ```python
 from pathlib import Path
-from zros2.generator import parse_msg_file, generate_all
+from zros2.generator import expand_action, parse_action_file, parse_msg_file, generate_all
 
-defs = parse_msg_file(Path("my_msgs/my_package/msg/MyMessage.msg"))
+defs = parse_msg_file(Path("my_msgs/my_package/msg/MyMessage.msg"), package="my_package")
 files = generate_all({"my_package/msg/MyMessage": defs}, Path("./out"))
 for f in files:
     f.path.parent.mkdir(parents=True, exist_ok=True)
     f.path.write_text(f.content, encoding="utf-8")
+
+# .action: the parser returns Goal / Result / Feedback only; expand_action adds transport types
+source = parse_action_file(Path("my_msgs/my_package/action/Fibonacci.action"), package="my_package")
+action_types = {d.full_name: d for d in expand_action(source)}
 ```
 
-`zros2.generator` also exports `parse_msg_text`, `parse_srv_file`, `parse_action_file`, `ActionSource`, `expand_action`, `MsgDefinition`, `MsgField`, `resolve_type`, `ResolvedType`, `VALID_DISTROS`. `.action` parsing returns the three user sections; transport types are added by `expand_action`.
+`zros2.generator` also exports `parse_msg_text`, `parse_srv_file`, `ActionSource`, `MsgDefinition`, `MsgField`, `resolve_type`, `ResolvedType`, `VALID_DISTROS`. Generated action packages re-export the wrapper plus `Goal` / `Result` / `Feedback`; `SendGoal_*` / `GetResult_*` / `FeedbackMessage` stay in the module but are omitted from `action/__init__.py`.
 
 ---
 
@@ -240,7 +250,7 @@ Note: service/action liveliness tokens carry no QoS, so these probes have no `qo
 
 ## 7. Actions
 
-Action types are generated from `.action` files (goal / result / feedback sections); the wrapper class carries 8 message classes: `Goal`, `Result`, `Feedback`, `FeedbackMessage`, `SendGoal_Request/Response`, `GetResult_Request/Response`.
+Action types are generated from `.action` files (goal / result / feedback sections). The generated module contains eight sub-types (including the `FeedbackMessage`, `SendGoal_*`, and `GetResult_*` transport types); `action/__init__.py` re-exports only the wrapper and the user-facing `Goal` / `Result` / `Feedback`.
 
 ```python
 from zros2 import ZRosClient
@@ -574,14 +584,14 @@ async def pubsub() -> None:
 
 ### 14.3 Generator (`zros2.generator`)
 
-| Symbol                                                                       | Description                                             |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `VALID_DISTROS`                                                              | `("humble", "iron", "jazzy", "kilted", "lyrical")`      |
-| `parse_msg_text` / `parse_msg_file` / `parse_srv_file` / `parse_action_file` | Parse IDL files (`.action` returns `ActionSource`)      |
-| `expand_action`                                                              | Expand an `ActionSource` into the 8 ROS 2 action types  |
-| `MsgDefinition` / `MsgField`                                                 | Parsed models                                           |
-| `resolve_type` / `ResolvedType`                                              | Type string → pycdr2 annotation expression              |
-| `generate_all(types, output_dir, root_package="", distro="")`                | Generate all sources; returns a list of `GeneratedFile` |
+| Symbol                                                                       | Description                                                   |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `VALID_DISTROS`                                                              | `("humble", "iron", "jazzy", "kilted", "lyrical")`            |
+| `parse_msg_text` / `parse_msg_file` / `parse_srv_file` / `parse_action_file` | Parse IDL; `.action` returns `ActionSource` (3 user sections) |
+| `expand_action` / `ActionSource`                                             | Expand into the 8 ROS 2 action `MsgDefinition`s               |
+| `MsgDefinition` / `MsgField`                                                 | Parsed models                                                 |
+| `resolve_type` / `ResolvedType`                                              | Type string → pycdr2 annotation expression                    |
+| `generate_all(types, output_dir, root_package="", distro="")`                | Generate all sources; returns a list of `GeneratedFile`       |
 
 ---
 

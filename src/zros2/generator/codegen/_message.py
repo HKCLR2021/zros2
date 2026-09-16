@@ -5,9 +5,6 @@ backed by pycdr2.IdlStruct for CDR serialization.
 """
 
 import ast
-import pathlib
-from collections.abc import Iterator
-from dataclasses import dataclass
 
 from lark import LarkError
 
@@ -19,19 +16,7 @@ from ..semantics._utilities import (
     generated_metadata_stmts,
     header_comment,
 )
-
-# ── Data type ────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class GeneratedFile:
-    """Represents a file to be written to disk."""
-
-    path: pathlib.Path
-    content: str
-
-    def __iter__(self) -> Iterator[pathlib.Path | str]:
-        return iter((self.path, self.content))
+from ._file import GeneratedFile as GeneratedFile
 
 
 # When ``root_package`` is provided (e.g. in a multi-package workspace),
@@ -65,28 +50,6 @@ _PYCDR2_PRIMITIVES: frozenset[str] = frozenset(
         "char",
     }
 )
-
-
-def _needs_optional_annotation(default: str, type_str: str) -> bool:  # pyright: ignore[reportUnusedFunction]
-    """Check whether a field with a ``None`` default needs ``Optional``.
-
-    Primitives (int32, float64, str, …) don't need ``Optional`` because pycdr2
-    treats ``None`` as a zero-value.  Nested message types and containers
-    *do* need ``Optional`` so the codegen produces ``None | …``.
-
-    Note: this is a string-heuristic check, intentionally kept simple so it
-    can handle type strings (``sequence[float64]``) that are not valid in the
-    CDR type parser (which uses ``sequence<float64>`` syntax).
-    """
-    if default != "None":
-        return False
-    # Strip array/sequence/array suffixes to get the base type.
-    base = type_str.split("[")[0].split("<")[0].strip()
-    # Typedef-style bounded string (e.g. ``string<=10``).
-    if base == "string" and "<=" in type_str:
-        return False
-    # Primitives that pycdr2 always treats as required.
-    return base not in _PYCDR2_PRIMITIVES
 
 
 def _is_container_type(type_str: str) -> bool:

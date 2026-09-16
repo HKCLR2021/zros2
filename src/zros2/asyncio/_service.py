@@ -8,6 +8,7 @@ event loop.
 
 import asyncio
 
+from .._namespace import join_name
 from .._session import ZenohSessionProxy
 from ..endpoints._service import ServiceClient
 from ..types._base import RosMessage
@@ -42,8 +43,9 @@ async def _invoke_service[ReqT: RosMessage, ResT: RosMessage](
             communication error occurs.
         ServiceNotAvailableException: If no response is received.
     """
-    full = f"{namespace}/{service_name.lstrip('/')}" if namespace else service_name
-    service_client = ServiceClient(session, full, srv_type)
+    service_client = ServiceClient(
+        session, join_name(namespace, service_name), srv_type
+    )
     return await asyncio.to_thread(service_client.send_request, body, timeout)
 
 

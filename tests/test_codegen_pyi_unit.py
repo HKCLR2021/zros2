@@ -2,7 +2,6 @@
 
 Tests the stub (``.pyi``) generator in isolation:
 - ``_stub_annotation`` type translation
-- ``_make_stub_field`` helper
 - ``generate_stub_module`` output structure and syntax
 - Import deduplication and annotation correctness
 """
@@ -17,12 +16,12 @@ from zros2.generator.codegen._stubs import (
 from zros2.generator.parsing._models import MsgDefinition, MsgField
 
 # ======================================================================
-# _stub_annotation — CDR annotation → pure-Python type hint
+# _stub_annotation — ROS type string → pure-Python type hint
 # ======================================================================
 
 
 class TestStubAnnotation:
-    """Translating pycdr2 annotation expressions to native Python types."""
+    """Translating ROS 2 type strings to native Python types."""
 
     def test_primitive_int32(self):
         assert _stub_annotation("int32") == "int"
@@ -35,9 +34,6 @@ class TestStubAnnotation:
 
     def test_primitive_bool(self):
         assert _stub_annotation("bool") == "bool"
-
-    def test_primitive_str(self):
-        assert _stub_annotation("str") == "str"
 
     def test_primitive_string(self):
         assert _stub_annotation("string") == "str"
@@ -52,29 +48,29 @@ class TestStubAnnotation:
         assert _stub_annotation("char") == "int"
 
     def test_sequence_unbounded(self):
-        assert _stub_annotation("sequence[int32]") == "Sequence[int]"
+        assert _stub_annotation("int32[]") == "Sequence[int]"
+        assert _stub_annotation("sequence<int32>") == "Sequence[int]"
 
     def test_sequence_bounded(self):
-        # Bounded size is preserved in the annotation (not stripped).
-        result = _stub_annotation("sequence[uint8, 10]")
-        assert "Sequence" in result
-        assert "int" in result
+        assert _stub_annotation("sequence<uint8,10>") == "Sequence[int]"
+        assert _stub_annotation("int32[<=5]") == "Sequence[int]"
 
     def test_array_fixed(self):
-        assert _stub_annotation("array[float64, 3]") == "tuple[float, ...]"
+        assert _stub_annotation("float64[3]") == "tuple[float, ...]"
 
     def test_array_fixed_int(self):
-        assert _stub_annotation("array[int32, 16]") == "tuple[int, ...]"
+        assert _stub_annotation("int32[16]") == "tuple[int, ...]"
+
+    def test_array_const_size(self):
+        assert _stub_annotation("int32[COUNT]") == "tuple[int, ...]"
 
     def test_bounded_str(self):
-        assert _stub_annotation("bounded_str[128]") == "str"
-        assert _stub_annotation("bounded_str[255]") == "str"
+        assert _stub_annotation("string<=128") == "str"
+        assert _stub_annotation("string<=MAX_LEN") == "str"
+        assert _stub_annotation("wstring<=10") == "str"
 
-    def test_sequence_of_sequence(self):
-        result = _stub_annotation("sequence[sequence[uint8]]")
-        # Outer ``sequence`` is mapped to ``Sequence``; the inner one stays
-        # lowercase because the regex only does one pass (non-recursive).
-        assert result == "Sequence[sequence[int]]"
+    def test_bounded_string_array(self):
+        assert _stub_annotation("string<=10[]") == "Sequence[str]"
 
     def test_nested_type_preserved(self):
         assert _stub_annotation("Header") == "Header"
@@ -421,53 +417,3 @@ class TestGenerateStubEdgeCases:
         )
         stub = generate_stub_module(defn)
         assert "Stub for" in stub
-
-
-# ======================================================================
-# _make_stub_field helper
-# ======================================================================
-
-
-class TestMakeStubField:
-    """Direct tests for the ``_make_stub_field`` helper."""
-
-    def test_primitive_field(self):
-        from zros2.generator.codegen._stubs import _make_stub_field
-        from zros2.generator.parsing._models import MsgDefinition, MsgField
-
-        field = MsgField(name="x", type_str="int32")
-        defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
-        native, line, needs_seq = _make_stub_field(field, defn, "")
-        assert native == "int"
-        assert "x: int" in line
-        assert not needs_seq
-
-    def test_sequence_field(self):
-        from zros2.generator.codegen._stubs import _make_stub_field
-        from zros2.generator.parsing._models import MsgDefinition, MsgField
-
-        field = MsgField(name="data", type_str="sequence<uint8>")
-        defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
-        native, _line, needs_seq = _make_stub_field(field, defn, "")
-        assert "Sequence" in native
-        assert needs_seq
-
-    def test_field_with_default(self):
-        from zros2.generator.codegen._stubs import _make_stub_field
-        from zros2.generator.parsing._models import MsgDefinition, MsgField
-
-        field = MsgField(name="x", type_str="int32", default="42")
-        defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
-        _, line, _ = _make_stub_field(field, defn, "")
-        assert "= 42" in line
-
-    def test_nested_field_has_no_default_suffix(self):
-        from zros2.generator.codegen._stubs import _make_stub_field
-        from zros2.generator.parsing._models import MsgDefinition, MsgField
-
-        field = MsgField(name="header", type_str="std_msgs/msg/Header")
-        defn = MsgDefinition(package="test", type_name="Foo", type_kind="msg")
-        _native, line, needs_seq = _make_stub_field(field, defn, "")
-        assert "Header" in line
-        assert "=" not in line  # no default for nested types
-        assert not needs_seq

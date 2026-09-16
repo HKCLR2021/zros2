@@ -80,13 +80,19 @@ zros2-gen \
   --output ./zros2_msgs
 ```
 
-| 选项              | 说明                                                                                 |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `--msg-dirs`      | 一个或多个包含 `msg/`、`srv/`、`action/` 子目录的 ROS 2 包目录                       |
-| `--output` / `-o` | 生成源码的输出目录                                                                   |
-| `--ros-version`   | ROS 2 发行版，决定捆绑的内置类型：`humble` / `iron` / `jazzy` / `kilted` / `lyrical` |
-| `--root-package`  | 顶层包名（默认取输出目录名；传 `--root-package ""` 可去掉前缀）                      |
-| `--dry-run`       | 只打印将生成的文件列表，不写盘                                                       |
+也可以把 workspace 根目录传给 `--msg-dirs`（扫描其直接子目录里含 `msg/`、`srv/` 或 `action/` 的包）：
+
+```bash
+zros2-gen --msg-dirs ./my_msgs --ros-version humble --output ./zros2_msgs
+```
+
+| 选项              | 说明                                                                                   |
+| ----------------- | -------------------------------------------------------------------------------------- |
+| `--msg-dirs`      | 一个或多个 ROS 2 包目录（含 `msg/`、`srv/` 和/或 `action/`），或这些包所在的 workspace |
+| `--output` / `-o` | 生成源码的输出目录                                                                     |
+| `--ros-version`   | ROS 2 发行版，决定捆绑的内置类型：`humble` / `iron` / `jazzy` / `kilted` / `lyrical`   |
+| `--root-package`  | 顶层包名（默认取输出目录名；传 `--root-package ""` 可去掉前缀）                        |
+| `--dry-run`       | 只打印将生成的文件列表，不写盘                                                         |
 
 等价模块入口：`python -m zros2.generator --msg-dirs ... --output ... --ros-version humble`。
 
@@ -102,16 +108,20 @@ zros2-gen \
 
 ```python
 from pathlib import Path
-from zros2.generator import parse_msg_file, generate_all
+from zros2.generator import expand_action, parse_action_file, parse_msg_file, generate_all
 
-defs = parse_msg_file(Path("my_msgs/my_package/msg/MyMessage.msg"))
+defs = parse_msg_file(Path("my_msgs/my_package/msg/MyMessage.msg"), package="my_package")
 files = generate_all({"my_package/msg/MyMessage": defs}, Path("./out"))
 for f in files:
     f.path.parent.mkdir(parents=True, exist_ok=True)
     f.path.write_text(f.content, encoding="utf-8")
+
+# .action：parser 只返回 Goal / Result / Feedback；传输类型由 expand_action 补齐
+source = parse_action_file(Path("my_msgs/my_package/action/Fibonacci.action"), package="my_package")
+action_types = {d.full_name: d for d in expand_action(source)}
 ```
 
-`zros2.generator` 同时导出 `parse_msg_text`、`parse_srv_file`、`parse_action_file`、`ActionSource`、`expand_action`、`MsgDefinition`、`MsgField`、`resolve_type`、`ResolvedType`、`VALID_DISTROS` 等程序化接口。`.action` 解析只返回三段用户定义；传输类型由 `expand_action` 展开。
+`zros2.generator` 同时导出 `parse_msg_text`、`parse_srv_file`、`ActionSource`、`MsgDefinition`、`MsgField`、`resolve_type`、`ResolvedType`、`VALID_DISTROS`。生成后的 action 包对用户导出 wrapper 与 `Goal` / `Result` / `Feedback`；`SendGoal_*` / `GetResult_*` / `FeedbackMessage` 仍在模块内，但不进入 `action/__init__.py`。
 
 ---
 
@@ -240,7 +250,7 @@ if client.service_is_ready("/add", srv_type, namespace="robot_01"):
 
 ## 7. 动作
 
-动作类型由 `.action` 文件生成（goal / result / feedback 三段），wrapper 类携带 `Goal`、`Result`、`Feedback`、`FeedbackMessage`、`SendGoal_Request/Response`、`GetResult_Request/Response` 共 8 个消息类。
+动作类型由 `.action` 文件生成（goal / result / feedback 三段）。生成模块里共有 8 个子类型（含 `FeedbackMessage`、`SendGoal_*`、`GetResult_*` 传输类型）；`action/__init__.py` 只再导出 wrapper 与用户侧的 `Goal` / `Result` / `Feedback`。
 
 ```python
 from zros2 import ZRosClient
@@ -571,14 +581,14 @@ async def pubsub() -> None:
 
 ### 14.3 生成器（`zros2.generator`）
 
-| 符号                                                                         | 说明                                               |
-| ---------------------------------------------------------------------------- | -------------------------------------------------- |
-| `VALID_DISTROS`                                                              | `("humble", "iron", "jazzy", "kilted", "lyrical")` |
-| `parse_msg_text` / `parse_msg_file` / `parse_srv_file` / `parse_action_file` | 解析 IDL 文件（`.action` 返回 `ActionSource`）     |
-| `expand_action`                                                              | 把 `ActionSource` 展开为 8 个 ROS 2 action 类型    |
-| `MsgDefinition` / `MsgField`                                                 | 解析模型                                           |
-| `resolve_type` / `ResolvedType`                                              | 类型字符串 → pycdr2 注解表达式                     |
-| `generate_all(types, output_dir, root_package="", distro="")`                | 生成全部源码，返回 `GeneratedFile` 列表            |
+| 符号                                                                         | 说明                                                    |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `VALID_DISTROS`                                                              | `("humble", "iron", "jazzy", "kilted", "lyrical")`      |
+| `parse_msg_text` / `parse_msg_file` / `parse_srv_file` / `parse_action_file` | 解析 IDL；`.action` 返回 `ActionSource`（三段用户定义） |
+| `expand_action` / `ActionSource`                                             | 展开为 8 个 ROS 2 action `MsgDefinition`                |
+| `MsgDefinition` / `MsgField`                                                 | 解析模型                                                |
+| `resolve_type` / `ResolvedType`                                              | 类型字符串 → pycdr2 注解表达式                          |
+| `generate_all(types, output_dir, root_package="", distro="")`                | 生成全部源码，返回 `GeneratedFile` 列表                 |
 
 ---
 

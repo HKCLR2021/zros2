@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator
 import zenoh
 
 from .._client import ZRosClient
+from .._namespace import join_name
 from .._session import ZenohSessionProxy
 from ..discovery import LivelinessType, Qos
 from ..types._base import RosMessage
@@ -62,8 +63,7 @@ class AsyncRobotClient:
             AsyncPublisher: Reusable publisher; ``publish`` and
                 ``aclose`` run on worker threads.
         """
-        full = f"{namespace}/{topic.lstrip('/')}" if namespace else topic
-        return AsyncPublisher(self._session, full, message_type)
+        return AsyncPublisher(self._session, join_name(namespace, topic), message_type)
 
     def create_subscriber[MsgT: RosMessage](
         self,
@@ -83,8 +83,7 @@ class AsyncRobotClient:
             AsyncSubscriber: ``async for`` iterator over received
                 messages; subscribes lazily on first iteration.
         """
-        full = f"{namespace}/{topic.lstrip('/')}" if namespace else topic
-        return AsyncSubscriber(self._session, full, message_type)
+        return AsyncSubscriber(self._session, join_name(namespace, topic), message_type)
 
     async def invoke_service[ReqT: RosMessage, ResT: RosMessage](
         self,

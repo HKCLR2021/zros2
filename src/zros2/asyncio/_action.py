@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from .._namespace import join_name
 from .._session import ZenohSessionProxy
 from ..endpoints._action import Action
 from ..exceptions import ActionInvokeException
@@ -129,8 +130,9 @@ async def _invoke_action[
         loop.call_soon_threadsafe(_put_nowait, message)
 
     action_timeout = 3000 if timeout is None else timeout
-    full = f"{namespace}/{action_name.lstrip('/')}" if namespace else action_name
-    action_client = Action(session, full, action_type, action_timeout)
+    action_client = Action(
+        session, join_name(namespace, action_name), action_type, action_timeout
+    )
     with action_client:
         action_client.feedback_callback = _forward_feedback
 

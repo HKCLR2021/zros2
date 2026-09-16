@@ -33,9 +33,11 @@ Why ``kw_defaults`` must match ``kwonlyargs`` length
 """
 
 import ast
-import re
 
-from ..parsing._models import MsgDefinition, MsgField
+from lark import LarkError
+
+from ..parsing._models import MsgDefinition
+from ..parsing._types import TypeInfo, parse_type
 from ..semantics._resolve_types import resolve_type
 from ..semantics._utilities import (
     default_expr,
@@ -43,70 +45,90 @@ from ..semantics._utilities import (
     header_comment,
 )
 
-
-def _stub_annotation(expr: str) -> str:
-    """Translate a CDR annotation expression into a native Python type hint.
-
-    ``msg_def`` fields carry CDR-level type expressions (e.g.
-    ``sequence[int16]``, ``array[float64, 3]``, ``bounded_str[128]``).
-    This function rewrites those into the equivalent pure-Python
-    annotation so that type checkers understand them without any
-    CDR-aware plugin.
-
-    The mapping is deliberately lossy when CDR and Python don't align
-    perfectly (e.g. all integer widths collapse to ``int``,
-    bounded strings become plain ``str``).  This is fine for static
-    analysis because the *runtime* module still enforces the CDR
-    constraints; the stub only needs to describe the shape.
-    """
-    expr = re.sub(r"^sequence\[(.+)\]$", r"Sequence[\1]", expr)
-    expr = re.sub(r"^array\[(.+),\s*\d+\]$", r"tuple[\1, ...]", expr)
-    expr = re.sub(r"^bounded_str\[\d+\]$", "str", expr)
-
-    _MAPPING = {
-        "int8": "int",
-        "int16": "int",
-        "int32": "int",
-        "int64": "int",
-        "uint8": "int",
-        "uint16": "int",
-        "uint32": "int",
-        "uint64": "int",
-        "float32": "float",
-        "float64": "float",
-        "bool": "bool",
-        "str": "str",
-        "string": "str",
-        "wstring": "str",
-        "byte": "int",
-        "char": "int",
-    }
-    pattern = re.compile(r"\b(" + "|".join(re.escape(k) for k in _MAPPING) + r")\b")
-    return pattern.sub(lambda m: _MAPPING[m.group(1)], expr)
+_PY_SCALARS: dict[str, str] = {
+    "bool": "bool",
+    "byte": "int",
+    "char": "int",
+    "int8": "int",
+    "int16": "int",
+    "int32": "int",
+    "int64": "int",
+    "uint8": "int",
+    "uint16": "int",
+    "uint32": "int",
+    "uint64": "int",
+    "float32": "float",
+    "float64": "float",
+    "str": "str",
+    "string": "str",
+    "wstring": "str",
+}
 
 
-def _make_stub_field(  # pyright: ignore[reportUnusedFunction]
-    field: MsgField, defn: MsgDefinition, root_package: str
-) -> tuple[str, str, bool]:
-    """Generate a stub (``.pyi``) field declaration for *field*.
+def _inner_ros_type(info: TypeInfo) -> str:
+    """Rebuild the ROS type string for a TypeInfo's wrapped inner type."""
+    if info.is_bounded_string and info.string_max is not None:
+        return f"{info.base_name}<={info.string_max}"
+    return info.base_name or ""
+
+
+def _native_stub_type(
+    type_str: str,
+    current_package: str = "",
+    root_package: str = "",
+) -> tuple[str, bool]:
+    """Map a ROS 2 type string to a Python stub annotation.
 
     Returns:
-        A ``(native_type, line, needs_seq)`` tuple where *native_type* is the
-        Python-native type expression, *line* is a full ``name: type = default``
-        line, and *needs_seq* is ``True`` if ``Sequence`` must be imported.
+        ``(annotation, needs_sequence)`` where *needs_sequence* is True
+        when ``collections.abc.Sequence`` must be imported.
     """
+    stripped = type_str.strip()
+    if not stripped:
+        return "object", False
+    try:
+        info = parse_type(stripped)
+    except LarkError:
+        return _PY_SCALARS.get(stripped, stripped), False
+
+    if info.kind in (
+        "unbounded",
+        "unbounded_sequence",
+        "bounded",
+        "bounded_sequence",
+    ):
+        inner, _ = _native_stub_type(
+            _inner_ros_type(info), current_package, root_package
+        )
+        return f"Sequence[{inner}]", True
+    if info.kind == "fixed":
+        inner, _ = _native_stub_type(
+            _inner_ros_type(info), current_package, root_package
+        )
+        return f"tuple[{inner}, ...]", False
+    if info.is_bounded_string:
+        return "str", False
+    if info.base_name in _PY_SCALARS:
+        return _PY_SCALARS[info.base_name], False
     resolved = resolve_type(
-        field.type_str,
-        current_package=defn.package,
-        root_package=root_package,
+        stripped, current_package=current_package, root_package=root_package
     )
-    native = _stub_annotation(resolved.annotation_expr)
-    needs_seq = "Sequence" in native
-    if field.default is not None:
-        line = f"{field.name}: {native} = {field.default}"
-    else:
-        line = f"{field.name}: {native}"
-    return native, line, needs_seq
+    return resolved.annotation_expr, False
+
+
+def _stub_annotation(
+    type_str: str,
+    current_package: str = "",
+    root_package: str = "",
+) -> str:
+    """Translate a ROS 2 type string into a native Python type hint.
+
+    The mapping is lossy when ROS and Python don't align (integer widths
+    collapse to ``int``, bounded strings become ``str``).  The runtime
+    module still enforces CDR constraints; the stub only describes shape.
+    """
+    native, _ = _native_stub_type(type_str, current_package, root_package)
+    return native
 
 
 def generate_stub_module(
@@ -155,7 +177,7 @@ def generate_stub_module(
             current_package=defn.package,
             root_package=root_package,
         )
-        native = _stub_annotation(resolved.annotation_expr)
+        native = _stub_annotation(const.type_str, defn.package, root_package)
         ext_imports.append("from typing import ClassVar")
         body.append(
             ast.AnnAssign(
@@ -180,8 +202,10 @@ def generate_stub_module(
             current_package=defn.package,
             root_package=root_package,
         )
-        native = _stub_annotation(resolved.annotation_expr)
-        if "sequence" in resolved.annotation_expr:
+        native, uses_sequence = _native_stub_type(
+            field.type_str, defn.package, root_package
+        )
+        if uses_sequence:
             needs_sequence = True
         if resolved.external_import:
             ext_imports.append(resolved.external_import)
@@ -208,14 +232,7 @@ def generate_stub_module(
     ann_keys: list[ast.expr | None] = [ast.Constant(value=f.name) for f in defn.fields]
     ann_values = [
         ast.parse(
-            _stub_annotation(
-                resolve_type(
-                    f.type_str,
-                    current_package=defn.package,
-                    root_package=root_package,
-                ).annotation_expr
-            ),
-            mode="eval",
+            _stub_annotation(f.type_str, defn.package, root_package), mode="eval"
         ).body
         for f in defn.fields
     ]
@@ -336,7 +353,7 @@ def generate_stub_module(
             current_package=defn.package,
             root_package=root_package,
         )
-        native = _stub_annotation(resolved.annotation_expr)
+        native = _stub_annotation(field.type_str, defn.package, root_package)
         init_params.append(
             ast.arg(
                 arg=field.name,

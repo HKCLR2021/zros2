@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator
 
 import zenoh
 
+from .._namespace import join_name
 from .._session import ZenohSessionProxy
 from ..discovery import Liveliness, LivelinessType, Qos
 
@@ -42,8 +43,7 @@ async def _query_liveliness(
     Returns:
         One sample per currently alive matching entity.
     """
-    full = f"{namespace}/{name.lstrip('/')}" if namespace else name
-    liveliness = Liveliness(session, entity, full, ros2_type, qos)
+    liveliness = Liveliness(session, entity, join_name(namespace, name), ros2_type, qos)
     return await asyncio.to_thread(liveliness.get)
 
 
@@ -93,8 +93,7 @@ async def _watch_liveliness(
         # actually executes — call_soon_threadsafe itself never raises.
         loop.call_soon_threadsafe(_put_nowait, sample)
 
-    full = f"{namespace}/{name.lstrip('/')}" if namespace else name
-    liveliness = Liveliness(session, entity, full, ros2_type, qos)
+    liveliness = Liveliness(session, entity, join_name(namespace, name), ros2_type, qos)
     with liveliness:
         liveliness.subscribe(_forward)
         while True:

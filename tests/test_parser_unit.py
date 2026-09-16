@@ -642,6 +642,27 @@ class TestFindMsgDirs:
         assert pkg in result
         assert tmp_path not in result
 
+    def test_srv_only_package(self, tmp_path):
+        pkg = tmp_path / "srv_pkg"
+        (pkg / "srv").mkdir(parents=True)
+        result = find_msg_dirs([pkg])
+        assert pkg in result
+
+    def test_action_only_package(self, tmp_path):
+        pkg = tmp_path / "act_pkg"
+        (pkg / "action").mkdir(parents=True)
+        result = find_msg_dirs([pkg])
+        assert pkg in result
+
+    def test_workspace_finds_srv_and_action_packages(self, tmp_path):
+        srv_pkg = tmp_path / "srv_pkg"
+        (srv_pkg / "srv").mkdir(parents=True)
+        act_pkg = tmp_path / "act_pkg"
+        (act_pkg / "action").mkdir(parents=True)
+        result = find_msg_dirs([tmp_path])
+        assert srv_pkg in result
+        assert act_pkg in result
+
 
 # ======================================================================
 # Boundary / edge-case tests

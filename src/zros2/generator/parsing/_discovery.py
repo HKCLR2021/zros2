@@ -6,8 +6,9 @@ that all cross-referenced types exist in the merged type dictionary.
 """
 
 import pathlib
-import re
 from collections.abc import Iterator
+
+from lark import LarkError
 
 from ..assets import BUILTIN_MSG_DIR
 from ..semantics._action import expand_action
@@ -17,7 +18,7 @@ from ._parser import (
     parse_msg_file,
     parse_srv_file,
 )
-from ._types import ROS2_PRIMITIVE_TYPES
+from ._types import ROS2_PRIMITIVE_TYPES, parse_type
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Builtin message discovery
@@ -76,19 +77,33 @@ def iter_action_files(action_dir: pathlib.Path) -> Iterator[tuple[str, pathlib.P
         yield package, path
 
 
+def _is_ros_package(path: pathlib.Path) -> bool:
+    """Return True if *path* looks like a ROS 2 interface package."""
+    return any((path / kind).is_dir() for kind in ("msg", "srv", "action"))
+
+
 def find_msg_dirs(base_paths: list[pathlib.Path]) -> list[pathlib.Path]:
-    """Collect all existing ``msg/`` subdirectories from the given base paths."""
+    """Collect ROS 2 package directories from *base_paths*.
+
+    A path counts as a package if it contains ``msg/``, ``srv/``, or
+    ``action/``.  When a path is a workspace (no such subfolder), its
+    immediate children are scanned instead.
+    """
     dirs: list[pathlib.Path] = []
+    seen: set[pathlib.Path] = set()
     for base in base_paths:
         if not base.is_dir():
             continue
-        msg_dir = base / "msg"
-        if msg_dir.is_dir():
-            dirs.append(base)
+        candidates: list[pathlib.Path]
+        if _is_ros_package(base):
+            candidates = [base]
         else:
-            for pkg_dir in sorted(base.iterdir()):
-                if pkg_dir.is_dir() and (pkg_dir / "msg").is_dir():
-                    dirs.append(pkg_dir)
+            candidates = sorted(p for p in base.iterdir() if p.is_dir())
+        for pkg_dir in candidates:
+            if pkg_dir in seen or not _is_ros_package(pkg_dir):
+                continue
+            dirs.append(pkg_dir)
+            seen.add(pkg_dir)
     return dirs
 
 
@@ -98,20 +113,15 @@ def find_msg_dirs(base_paths: list[pathlib.Path]) -> list[pathlib.Path]:
 
 
 def _strip_wrappers(raw: str) -> str:
-    """Strip array/sequence/bounded_str wrappers to get the inner type name."""
-    m = re.match(r"^(\w[\w/]*)\[\d*\]$", raw)
-    if m:
-        return m.group(1)
-    m = re.match(r"^(\w[\w/]*)\[\]$", raw)
-    if m:
-        return m.group(1)
-    m = re.match(r"^sequence<(\w[\w/]*)", raw)
-    if m:
-        return m.group(1)
-    m = re.match(r"^string<=?\d+$", raw)
-    if m:
-        return "string"
-    return raw
+    """Strip array/sequence/bounded-string wrappers via the Lark type parser."""
+    stripped = raw.strip()
+    if not stripped:
+        return ""
+    try:
+        info = parse_type(stripped)
+    except LarkError:
+        return stripped
+    return info.base_name or stripped
 
 
 def _resolve_full_name(raw_type: str, current_package: str) -> str:

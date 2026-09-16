@@ -1,7 +1,6 @@
-"""Shared utilities for code generation — header comment, naming, defaults,
-import formatters.
+"""Shared utilities for code generation — header comment, naming, defaults.
 
-**Zero-regex** — type pattern detection is delegated to the Lark-based
+Type-pattern detection is delegated to the Lark-based
 :mod:`zros2.generator.parsing._types` parser."""
 
 import ast
@@ -148,30 +147,3 @@ def default_expr(type_str: str) -> str:
         return "None"
 
     return "None"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Import formatters
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def _format_pycdr2_imports(import_names: frozenset[str]) -> str:  # pyright: ignore[reportUnusedFunction]
-    """Format the import statement for pycdr2.types."""
-    if not import_names:
-        return ""
-
-    names = sorted(import_names)
-    if len(names) <= 4:
-        joined = ", ".join(names)
-        return f"from pycdr2.types import {joined}"
-
-    indent = " " * 4
-    items = ",\n".join(f"{indent}{n}" for n in names)
-    return f"from pycdr2.types import (\n{items},\n)"
-
-
-def _format_external_imports(imports: list[str]) -> str:  # pyright: ignore[reportUnusedFunction]
-    """Format external (cross-package) import statements."""
-    if not imports:
-        return ""
-    return "\n".join(sorted(set(imports)))

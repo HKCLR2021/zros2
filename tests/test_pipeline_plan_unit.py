@@ -84,7 +84,7 @@ class TestRootInitUpdate:
         already contains an ``__init__.py`` that is missing the registry import,
         # ``_update_root_init`` appends it.
         """
-        from zros2.generator.codegen._message import GeneratedFile
+        from zros2.generator.codegen._file import GeneratedFile
         from zros2.generator.pipeline._generate import _update_root_init
 
         output_dir = tmp_path / "out"
@@ -103,7 +103,7 @@ class TestRootInitUpdate:
         """When root __init__.py already has the registry import, it is not
         duplicated (the function returns early after the for-loop        # Covers the early-return path in ``_update_root_init``.
         """
-        from zros2.generator.codegen._message import GeneratedFile
+        from zros2.generator.codegen._file import GeneratedFile
         from zros2.generator.pipeline._generate import _update_root_init
 
         output_dir = tmp_path / "out"
@@ -125,7 +125,7 @@ class TestRootInitUpdate:
 
     def test_root_init_created_when_missing_from_files(self, tmp_path: pathlib.Path):
         """When root __init__.py is not in the files list, it is create        # Covers the file-creation path (lines 260-271)."""
-        from zros2.generator.codegen._message import GeneratedFile
+        from zros2.generator.codegen._file import GeneratedFile
         from zros2.generator.pipeline._generate import _update_root_init
 
         output_dir = tmp_path / "out"

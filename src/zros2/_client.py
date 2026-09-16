@@ -12,6 +12,7 @@ import types
 
 import zenoh
 
+from ._namespace import join_name
 from ._session import ZenohSessionProxy
 from .discovery._liveliness import Liveliness, LivelinessType
 from .discovery._qos import Qos
@@ -116,8 +117,7 @@ class ZRosClient:
         Returns:
             Publisher: Configured publisher instance.
         """
-        full = f"{namespace}/{topic.lstrip('/')}" if namespace else topic
-        return Publisher(self._session_proxy, full, message_type)
+        return Publisher(self._session_proxy, join_name(namespace, topic), message_type)
 
     # ── Subscriber ───────────────────────────────────────────────────
 
@@ -138,8 +138,9 @@ class ZRosClient:
         Returns:
             Subscriber: Configured subscriber instance.
         """
-        full = f"{namespace}/{topic.lstrip('/')}" if namespace else topic
-        return Subscriber(self._session_proxy, full, message_type)
+        return Subscriber(
+            self._session_proxy, join_name(namespace, topic), message_type
+        )
 
     # ── Service Client ───────────────────────────────────────────────
 
@@ -162,8 +163,9 @@ class ZRosClient:
         Returns:
             ServiceClient: Configured service client instance.
         """
-        full = f"{namespace}/{service_name.lstrip('/')}" if namespace else service_name
-        return ServiceClient(self._session_proxy, full, service_type)
+        return ServiceClient(
+            self._session_proxy, join_name(namespace, service_name), service_type
+        )
 
     # ── Service readiness ───────────────────────────────────────────────
 
@@ -287,8 +289,12 @@ class ZRosClient:
         """
         if timeout is None:
             timeout = 3000
-        full = f"{namespace}/{action_name.lstrip('/')}" if namespace else action_name
-        return Action(self._session_proxy, full, action_type, timeout)
+        return Action(
+            self._session_proxy,
+            join_name(namespace, action_name),
+            action_type,
+            timeout,
+        )
 
     # ── Liveliness ───────────────────────────────────────────────────
 
@@ -316,11 +322,10 @@ class ZRosClient:
         """
         if qos is None:
             qos = Qos.any()
-        full = f"{namespace}/{name.lstrip('/')}" if namespace else name
         return Liveliness(
             self._session_proxy,
             entity,
-            full,
+            join_name(namespace, name),
             ros2_type,
             qos,
         )

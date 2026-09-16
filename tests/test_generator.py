@@ -420,6 +420,12 @@ class TestStripWrappers:
     def test_plain_type(self):
         assert _strip_wrappers("std_msgs/msg/Header") == "std_msgs/msg/Header"
 
+    def test_bounded_array(self):
+        assert _strip_wrappers("int32[<=5]") == "int32"
+
+    def test_const_bound(self):
+        assert _strip_wrappers("string<=MAX") == "string"
+
 
 class TestResolveTypeEdgeCases:
     """Additional edge cases for type resolution."""
@@ -628,7 +634,7 @@ class TestActionWrapperGeneration:
         import pathlib
         import tempfile
 
-        from zros2.generator.codegen._message import GeneratedFile
+        from zros2.generator.codegen._file import GeneratedFile
         from zros2.generator.codegen._service_action import generate_action_wrappers
         from zros2.generator.parsing._models import MsgDefinition
 
@@ -741,14 +747,10 @@ class TestDefaultExprEdgeCases:
 
         assert default_expr("time") == "None"
 
-    def test_large_import_list(self):
-        from zros2.generator.semantics._utilities import _format_pycdr2_imports
+    def test_bounded_array_default(self):
+        from zros2.generator.semantics._utilities import default_expr
 
-        result = _format_pycdr2_imports(
-            frozenset({"int32", "float64", "string", "uint8", "sequence"})
-        )
-        assert "(" in result  # multi-line format
-        assert len(result) > 60
+        assert default_expr("int32[<=5]") == "()"
 
 
 class TestParseParserEdgeCases:
@@ -1174,3 +1176,50 @@ class TestCLI:
         ]
         with mock.patch.object(sys, "argv", test_args):
             main()
+
+    def test_main_workspace_scans_child_packages(self, tmp_path):
+        """A workspace directory is expanded into child ROS 2 packages."""
+        import sys
+        from unittest import mock
+
+        from zros2.generator._cli import main
+
+        ws = tmp_path / "ws"
+        pkg = ws / "test_pkg"
+        (pkg / "msg").mkdir(parents=True)
+        (pkg / "msg" / "Point.msg").write_text("float64 x\n")
+
+        test_args = [
+            "zros2-gen",
+            "--msg-dirs",
+            str(ws),
+            "--ros-version",
+            "humble",
+            "--output",
+            str(tmp_path / "out"),
+            "--dry-run",
+        ]
+        with mock.patch.object(sys, "argv", test_args):
+            main()
+
+    def test_main_no_packages_found(self, tmp_path):
+        """A directory with no msg/srv/action packages is an error."""
+        import sys
+        from unittest import mock
+
+        from zros2.generator._cli import main
+
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        test_args = [
+            "zros2-gen",
+            "--msg-dirs",
+            str(empty),
+            "--ros-version",
+            "humble",
+            "--output",
+            str(tmp_path / "out"),
+        ]
+        with mock.patch.object(sys, "argv", test_args):
+            with pytest.raises(SystemExit):
+                main()

@@ -9,7 +9,8 @@ layer.
 import ast
 import pathlib
 
-from ..codegen._message import GeneratedFile, generate_message_module
+from ..codegen._file import GeneratedFile
+from ..codegen._message import generate_message_module
 from ..codegen._package_init import generate_init_module, generate_package_init
 from ..codegen._registry import REGISTRY_AST
 from ..codegen._service_action import (

@@ -32,10 +32,12 @@
 src/zros2/
 ├── __init__.py          # 顶层公开 API 再导出（__all__）
 ├── _client.py           # ZRosClient：统一入口、工厂方法、服务就绪探测
+├── _namespace.py        # join_name：设备命名空间与图名称拼接（sync/async 共用）
 ├── _session.py          # ZenohSessionProxy：防破坏的共享 session 代理
 ├── _action_msgs.py      # 内置 action_msgs 协议消息（GoalInfo/GoalStatus/...）
 ├── exceptions.py        # 异常层次（ZRos2Exception 根）
 ├── endpoints/           # Publisher / Subscriber / ServiceClient / Action / GoalHandle
+│   └── _action_keys.py  # action_key：Zenoh 上五条 `_action/` 通道
 ├── types/               # RosMessage 协议、RosService/RosAction/RosActionView、容器
 ├── discovery/           # Liveliness / LivelinessType / Qos / LivelinessKey
 ├── asyncio/             # 可选 asyncio 门面（AsyncRobotClient 等）
@@ -59,6 +61,8 @@ benchmarks/              # pytest-benchmark 套件（benchmarks.py, compare.py�
 - `__setattr__` 一律拒绝（`PermissionError`）；
 - 这样端点无法误关共享 session，生命周期只归 `ZRosClient` 管。
 
+工厂方法（以及 asyncio 门面的对应入口）用 `_namespace.join_name(namespace, name)` 拼图名称：空命名空间原样返回；非空时去掉 `name` 的前导 `/` 再拼 `{namespace}/{name}`。不要在各端点再复制这一行。
+
 ### 2.2 端点设计要点
 
 | 端点            | 要点                                                                                                                                                                                                                                                                             |
@@ -67,7 +71,7 @@ benchmarks/              # pytest-benchmark 套件（benchmarks.py, compare.py�
 | `Subscriber`    | 回调运行在 Zenoh 线程，**只接受同步回调**：检测到协程先 `close()` 再抛 `TypeError`（避免 “coroutine was never awaited” 泄漏）；`RLock` 保护订阅状态；重复 `subscribe` 抛 `ValueError`；反序列化异常只记日志                                                                      |
 | `ServiceClient` | 基于 zenoh `get`；错误应答抛 `ServiceInvokeException`，无应答抛 `ServiceNotAvailableException`，`zenoh.ZError` 包装为 `ServiceInvokeException`                                                                                                                                   |
 | `Action`        | 三个内部服务传输 + 两个订阅；通道路径由 `endpoints/_action_keys.action_key` 生成；`_make_srv_type` 动态构造最小服务类型类并按 `(name, request, response)` 缓存；`goal_id` 用 `os.urandom(16)` 生成；`_active_goal_ids` 集合按 goal_id 过滤反馈；取消全部使用全零通配 `(0,) * 16` |
-| `Liveliness`    | key 表达式由 `LivelinessKey` 构造/解析：`@/{zenoh_id}/@ros2_lv/{MP                                                                                                                                                                                                               | MS  | SS  | SC  | AS  | AC}/...`，名称/类型中的 `/`转义为`§`；服务/动作 key 不带 QoS，发布/订阅 key 携带（`Qos.to_key_expr`/`from_key_expr`） |
+| `Liveliness`    | key 表达式由 `LivelinessKey` 构造/解析：`@/{zenoh_id}/@ros2_lv/{MP,MS,SS,SC,AS,AC}/...`；名称/类型中的 `/` 转义为 `§`；服务/动作 key 不带 QoS，发布/订阅 key 携带（`Qos.to_key_expr` / `from_key_expr`）                                                                         |
 
 ### 2.3 内置 action_msgs
 
@@ -93,11 +97,11 @@ benchmarks/              # pytest-benchmark 套件（benchmarks.py, compare.py�
         │
         ▼
 ┌─────────────┐
-│   parsing    │  Lark 语法 → IR 模型（MsgField, MsgDefinition）
+│   parsing    │  Lark → IR（MsgField / MsgDefinition；.action → ActionSource）
 └──────┬──────┘
        ▼
 ┌─────────────┐
-│  semantics   │  resolve_type / ResolvedType：类型字符串 → pycdr2 注解表达式
+│  semantics   │  expand_action（8 个 action 类型）+ resolve_type → pycdr2 注解
 └──────┬──────┘
        ▼
 ┌─────────────┐
@@ -114,18 +118,19 @@ benchmarks/              # pytest-benchmark 套件（benchmarks.py, compare.py�
 
 ### 3.1 各阶段职责
 
-- **parsing/**：Lark 语法解析 `.msg` / `.srv` / `.action`；`.action` 只产出 `ActionSource`（Goal / Result / Feedback 三段）。`_discovery.py` 定义 `VALID_DISTROS`，收集类型时调用 `expand_action` 以便依赖校验看到完整集合。
-- **semantics/**：`resolve_type` 解析出 `ResolvedType`；`expand_action` / `ACTION_SPEC` 是 ROS action IDL 展开的唯一来源（5 个传输类型在这里合成，不在 parser 里）；`_utilities.py` 提供默认值表达式、元数据语句、文件头注释等。
+- **parsing/**：Lark 语法解析 `.msg` / `.srv` / `.action`。`.action` **只**产出 `ActionSource`（Goal / Result / Feedback），不编码传输字段。`_discovery.py` 定义 `VALID_DISTROS`；`find_msg_dirs` 识别含 `msg/`、`srv/` 或 `action/` 的包（也可扫描 workspace 的直接子目录）；`collect_all_types` 在收集时调用 `expand_action`，以便依赖校验看到完整的 8 个 action 类型。依赖校验剥数组/序列包装走 `parse_type`，不再用残缺 regex。
+- **semantics/**：`expand_action` / `ACTION_SPEC` / `GOAL_ID_TYPE` 是 ROS action IDL 展开的**唯一来源**（5 个传输类型在这里用 `MsgField` 列表合成，不回灌 `.msg` 文本）。`resolve_type` 解析出 `ResolvedType`。`_utilities.py` 提供默认值表达式、元数据语句、文件头注释、`to_snake_case`。
 - **codegen/**：
-  - `_message.py`：`GeneratedFile(path, content)` 冻结 dataclass + `generate_message_module`；
+  - `_file.py`：`GeneratedFile(path, content)` 冻结 dataclass；pipeline/writer **只**依赖此 DTO，不 import `_message.py`；
+  - `_message.py`：`generate_message_module`（仍再导出 `GeneratedFile` 以兼容旧导入）；
   - `_registry.py`：`REGISTRY_AST` 是注册表的 AST 蓝图（`register`、`register_service`、`register_action`、`get_type`、`has_type`、`iter_types`、`get_service`、`get_action`）；
-  - `_service_action.py`：服务/动作 wrapper 合并生成（`SRV_SUFFIXES`、`generate_service_wrappers` / `generate_action_wrappers`；动作后缀表来自 `semantics._action.ACTION_SUFFIXES`）；
-  - `_package_init.py`、`_stubs.py`：包初始化模块与 `.pyi` stub。
-- **pipeline/**：`build_plan(user_dirs, output_dir, distro, root_package)` → `GenerationPlan`；`execute_plan(plan, dry_run=...)`；`generate_all(types, output_dir, root_package="", distro="")` 六阶段编排，并调用 `_update_root_init` 把注册表函数再导出到根 `__init__.py`。
+  - `_service_action.py`：服务/动作 wrapper 合并生成（`SRV_SUFFIXES` 属于本模块；动作后缀表来自 `semantics._action.ACTION_SUFFIXES`）；
+  - `_package_init.py`、`_stubs.py`：包初始化模块与 `.pyi` stub。stub 的 Python 注解由 `TypeInfo` / `resolve_type` 映射（有界字符串、常量边界数组不再二次 regex）。
+- **pipeline/**：`build_plan(user_dirs, output_dir, distro, root_package)` → `GenerationPlan`；`execute_plan(plan, dry_run=...)`；`generate_all` 六阶段编排。action 子包 `__init__` 的导出过滤使用 `ACTION_WIRE_SUFFIXES`（对用户隐藏 5 个传输类型）。
 
 ### 3.2 CLI
 
-`_cli.py`：`build_parser()` / `main()`；入口 `zros2-gen`（`pyproject.toml` 的 `[project.scripts]`）与 `python -m zros2.generator`（`__main__.py`）。参数：`--msg-dirs`、`--output`、`--ros-version`（choices=`VALID_DISTROS`）、`--root-package`、`--dry-run`。
+`_cli.py`：`build_parser()` / `main()`；入口 `zros2-gen`（`pyproject.toml` 的 `[project.scripts]`）与 `python -m zros2.generator`（`__main__.py`）。参数：`--msg-dirs`、`--output`、`--ros-version`（choices=`VALID_DISTROS`）、`--root-package`、`--dry-run`。`--msg-dirs` 可以是包目录，也可以是 workspace（扫描直接子目录里含 `msg/` / `srv/` / `action/` 的包）；找不到任何包时 CLI 报错退出。
 
 ### 3.3 内置消息资产
 
@@ -219,16 +224,16 @@ pytest，无 `unittest.TestCase`；测试类用 `TestPascalCase` 描述被测单
 
 | 测试文件                                                                                                                                                    | 覆盖                                                       |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `test_parser_unit.py` / `test_type_grammar.py`                                                                                                              | Lark 语法、类型表达式、字段级解析                          |
+| `test_parser_unit.py` / `test_type_grammar.py` / `test_action_expand_unit.py`                                                                               | Lark 语法、类型表达式、字段级解析、action IDL 展开         |
 | `test_codegen_msg_unit.py` / `test_codegen_init_unit.py` / `test_codegen_pyi_unit.py` / `test_codegen_registry_unit.py` / `test_codegen_srv_action_unit.py` | 消息模块、初始化模块、stub、注册表、服务/动作 wrapper 生成 |
 | `test_pipeline_plan_unit.py` / `test_codegen_orchestrator_unit.py` / `test_generator.py`                                                                    | plan 构建、编排、校验、生成器集成                          |
-| `test_publisher_unit.py` / `test_subscriber_unit.py` / `test_service_unit.py` / `test_action_unit.py` / `test_action_msgs_unit.py`                          | 端点行为                                                   |
-| `test_client_unit.py`                                                                                                                                       | `ZRosClient` 工厂方法与就绪探测                            |
+| `test_publisher_unit.py` / `test_subscriber_unit.py` / `test_service_unit.py` / `test_action_unit.py` / `test_action_msgs_unit.py`                          | 端点行为（含 `action_key` 通道映射）                       |
+| `test_client_unit.py` / `test_namespace_unit.py`                                                                                                            | `ZRosClient` 工厂方法、就绪探测、`join_name`               |
 | `test_liveliness_unit.py`                                                                                                                                   | key 表达式构建与解析、QoS                                  |
 | `test_protocols.py` / `test_runtime_structure_unit.py` / `test_runtime_contract.py`                                                                         | 协议结构性检查、运行时结构与 ABI 契约                      |
 | `test_type_map_unit.py` / `test_utilities.py` / `test_utils_unit.py`                                                                                        | 类型映射、默认值、`from_attributes` 等工具                 |
 | `test_asyncio_*.py`                                                                                                                                         | asyncio 门面（service/action/endpoints/liveliness/client） |
-| `test_integration.py`                                                                                                                                       | 端到端生成 + 校验                                          |
+| `test_integration.py`                                                                                                                                       | 本机两个 Zenoh peer 的 pub/sub、service、action 互通       |
 | `test_proxies_unit.py`                                                                                                                                      | `ZenohSessionProxy` 保护语义                               |
 
 新增功能/修复必须配套测试；新 `_` 前缀函数要么被测试覆盖（具名 ignore 才合理），要么删除。
@@ -313,7 +318,7 @@ pytest benchmarks/ --benchmark-only --collect-only
 
 1. `parsing/`：Lark 语法与 `MsgField` 模型（若需要新字段形态）；
 2. `semantics/`：`resolve_type` 的分支与 `ResolvedType` 注解表达式；
-3. `codegen/`：`generate_message_module` 或 wrapper 生成的 AST 逻辑 + `.pyi` stub；
+3. `codegen/`：`generate_message_module` 或 wrapper 生成的 AST 逻辑 + `.pyi` stub（stub 走 `TypeInfo`，不要对注解字符串再 regex）；
 4. `pipeline/`：确认收集/校验/写盘无需调整；
 5. 测试：parser 单测 → codegen 单测 → 契约测试 → 集成测试；基准全跑；
 6. 若生成产物新增了 `zros2.*` 导入，更新 `RUNTIME_CONTRACT`。
@@ -323,3 +328,10 @@ pytest benchmarks/ --benchmark-only --collect-only
 1. 移动后更新包内相对导入与 `__init__.py` 再导出；
 2. 若该模块被生成器硬编码引用（当前仅 `zros2.types._utils` 的 `from_attributes`），在**同一次变更**中更新 `RUNTIME_CONTRACT` 并重新生成产物，否则契约测试会失败；
 3. 检查 README/docstring 示例不引用 `_` 前缀路径。
+
+### 场景 D：改 ROS action 传输类型布局
+
+1. **只改** `semantics/_action.py` 的 `ACTION_SPEC` / `GOAL_ID_TYPE`（parser 不得再写 `uint8[16]` 或 `SendGoal_*`）；
+2. codegen 后缀表与 pipeline 导出过滤从该 spec 推导，不要另写一份；
+3. runtime 的 Zenoh 通道路径在 `endpoints/_action_keys.py`，与 IDL 展开分开；`_action_msgs.py` 的 `goal_id` 布局与 `GOAL_ID_TYPE` 对齐；
+4. 补 `test_action_expand_unit.py`，再跑生成器集成测试。改 `GOAL_ID_TYPE` 等于改 wire，需要与 `zenoh-bridge-ros2dds` 对打后再做。

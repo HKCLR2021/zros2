@@ -25,7 +25,8 @@ import tempfile
 import types
 from typing import get_type_hints
 
-from zros2.generator.codegen._message import GeneratedFile, generate_message_module
+from zros2.generator.codegen._file import GeneratedFile
+from zros2.generator.codegen._message import generate_message_module
 from zros2.generator.codegen._registry import REGISTRY_AST
 from zros2.generator.codegen._service_action import (
     ACTION_SUFFIXES,

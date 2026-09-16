@@ -15,7 +15,7 @@ from unittest import mock
 import pytest
 
 from zros2.generator.assets import BUILTIN_MSG_DIR
-from zros2.generator.codegen._message import GeneratedFile
+from zros2.generator.codegen._file import GeneratedFile
 from zros2.generator.parsing._discovery import (
     VALID_DISTROS,
     _resolve_full_name,
@@ -90,11 +90,16 @@ class TestStripWrappers:
         assert _strip_wrappers("float64[3]") == "float64"
 
     def test_bounded_dynamic_array(self):
-        """The regex currently does not handle ``[<=N]``, just ``[N]``."""
-        # This is a known limitation — test the actual behaviour
-        result = _strip_wrappers("int32[<=5]")
-        # The regex for [N] won't match, so it falls through to raw
-        assert result == "int32[<=5]"
+        assert _strip_wrappers("int32[<=5]") == "int32"
+
+    def test_const_size_array(self):
+        assert _strip_wrappers("int32[COUNT]") == "int32"
+
+    def test_bounded_string_const(self):
+        assert _strip_wrappers("string<=MAX_LEN") == "string"
+
+    def test_wstring_bounded(self):
+        assert _strip_wrappers("wstring<=10") == "wstring"
 
     def test_sequence(self):
         assert _strip_wrappers("sequence<uint8>") == "uint8"
@@ -158,6 +163,8 @@ class TestResolveFullName:
         assert result2 == "std_msgs/msg/String"
         result3 = _resolve_full_name("std_msgs/msg/String[]", "test")
         assert result3 == "std_msgs/msg/String"
+        result4 = _resolve_full_name("std_msgs/msg/String[<=5]", "test")
+        assert result4 == "std_msgs/msg/String"
 
     def test_multi_slash_returns_as_is(self):
         """A type with >1 slash and no msg/srv/action returns as-is."""

@@ -3,7 +3,6 @@
 Tests the core message module code generator in isolation:
 - ``GeneratedFile`` data type
 - ``_registry_import`` helper
-- ``_needs_optional_annotation`` heuristic
 - ``generate_message_module`` output structure, correctness, and syntax
 - Generated code can be compiled and produces valid dataclass-like classes
 """
@@ -15,9 +14,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from zros2.generator.codegen._file import GeneratedFile
 from zros2.generator.codegen._message import (
-    GeneratedFile,
-    _needs_optional_annotation,
     generate_message_module,
     registry_import,
 )
@@ -127,47 +125,6 @@ class TestRegistryImport:
 
     def test_with_nested_root_package(self):
         assert registry_import("my.workspace.msgs") == "my.workspace.msgs._registry"
-
-
-# ======================================================================
-# _needs_optional_annotation
-# ======================================================================
-
-
-class TestNeedsOptionalAnnotation:
-    def test_nested_type_with_none_default_needs_optional(self):
-        assert _needs_optional_annotation("None", "Header")
-
-    def test_primitive_with_none_default_does_not_need_optional(self):
-        assert not _needs_optional_annotation("None", "int32")
-        assert not _needs_optional_annotation("None", "float64")
-        assert not _needs_optional_annotation("None", "bool")
-        assert not _needs_optional_annotation("None", "str")
-        assert not _needs_optional_annotation("None", "uint8")
-
-    def test_non_none_default_does_not_need_optional(self):
-        assert not _needs_optional_annotation("0", "int32")
-        assert not _needs_optional_annotation('""', "str")
-        assert not _needs_optional_annotation("False", "bool")
-
-    def test_sequence_type_with_none_default_needs_optional(self):
-        assert _needs_optional_annotation("None", "sequence[float64]")
-        assert _needs_optional_annotation("None", "array[float64, 3]")
-
-    def test_bounded_string_with_none_default_does_not_need_optional(self):
-        """Bounded strings with None default do not need Optional.
-
-        Covers the ``if base == "string" and "<=" in type_str: return False`` branch.
-        """
-        assert not _needs_optional_annotation("None", "string<=255")
-
-    def test_non_none_default_returns_false_early(self):
-        """When default is not "None", return False without checking type_str.
-
-        Covers the ``if default != "None": return False`` branch on line 83.
-        """
-        # Provide a value that is not "None" — function returns False immediately.
-        assert not _needs_optional_annotation("42", "UnknownType")
 
 
 # ======================================================================

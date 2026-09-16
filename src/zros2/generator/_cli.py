@@ -4,7 +4,7 @@ import argparse
 import pathlib
 import sys
 
-from .parsing._discovery import VALID_DISTROS
+from .parsing._discovery import VALID_DISTROS, find_msg_dirs
 from .pipeline._plan import build_plan, execute_plan
 
 
@@ -22,8 +22,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         type=pathlib.Path,
         help=(
-            "One or more ROS2 package directories containing msg/, srv/, and/or "
-            "action/ subfolders."
+            "One or more ROS 2 package directories (containing msg/, srv/, "
+            "and/or action/), or a workspace whose immediate children are "
+            "such packages."
         ),
     )
     parser.add_argument(
@@ -64,12 +65,16 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    user_dirs: list[pathlib.Path] = []
+    resolved_inputs: list[pathlib.Path] = []
     for path in args.msg_dirs:
         resolved = path.resolve()
         if not resolved.is_dir():
             parser.error(f"Input directory does not exist: {resolved}")
-        user_dirs.append(resolved)
+        resolved_inputs.append(resolved)
+
+    user_dirs = find_msg_dirs(resolved_inputs)
+    if not user_dirs:
+        parser.error("No ROS 2 packages (msg/, srv/, or action/) found in --msg-dirs")
 
     output_dir = args.output.resolve()
 
