@@ -1,0 +1,236 @@
+# zros2 AI Development Guidelines
+
+## Project Overview
+
+**zros2** is a lightweight Python library that provides ROS 2-like communication primitives (publishers, subscribers, service clients, action clients) over [Zenoh](https://zenoh.io/). Message types are statically generated from `.msg` / `.srv` / `.action` files and serialized with `pycdr2`.
+
+- **Language:** Python >= 3.12
+- **Build system:** setuptools (`pyproject.toml`)
+- **Testing:** pytest + pytest-asyncio
+- **Key dependencies:** `eclipse-zenoh>=1.9.0`, `pycdr2>=1.0.0`, `numpy>=2.4.6`, `lark>=1.3.0`
+- **License:** Proprietary
+
+## Layout
+
+- `src/zros2/` — runtime library; public symbols are re-exported from each
+  package's `__init__.py` (see "Public / Private API Design").
+- `src/zros2/generator/` — the `zros2-gen` code generator
+  (`parsing/` → `semantics/` → `codegen/` → `pipeline/`), with bundled ROS 2
+  IDL per distro under `assets/builtin_msgs/`.
+- `tests/` — pytest suite; `benchmarks/` — pytest-benchmark suites.
+
+## Public / Private API Design
+
+### Public surface
+
+- Public API is **only** what a package `__init__.py` re-exports via `__all__`:
+  - `zros2` — `ZRosClient`, endpoints (`Publisher`, `Subscriber`,
+    `ServiceClient`, `Action`, `GoalHandle`), discovery (`Liveliness`,
+    `LivelinessType`, `Qos`), the type protocols/containers, and the
+    built-in action protocol messages (`GoalInfo`, `GoalStatus`,
+    `GoalStatusArray`, `CancelGoal_Request`, `CancelGoal_Response`).
+  - `zros2.exceptions` — the exception hierarchy (`ZRos2Exception`, the
+    `Service*Exception` and `Action*Exception` subtypes).
+  - `zros2.asyncio` — optional asyncio facade: the client-bound
+    `AsyncRobotClient` (accepts a `ZRosClient` or session proxy) for
+    service calls, action invocation with the `ActionFeedback` /
+    `ActionResult` events, async pub/sub endpoints (`AsyncPublisher` /
+    `AsyncSubscriber`), and liveliness query/watch — no module-level
+    entry points.
+  - `zros2.types` — exactly six symbols: `RosMessage`, `RosService`,
+    `RosAction`, `RosActionView`, `ServiceTypes`, `ActionTypes`.
+  - `zros2.generator` — `VALID_DISTROS`, the `parse_*` functions,
+    `ActionSource`, `expand_action`, `ResolvedType` / `resolve_type`,
+    `generate_all`.
+  - `zros2.generator.codegen` — `GeneratedFile` and the `generate_*`
+    functions (programmatic API).
+- Protocols (`RosMessage` / `RosService` / `RosAction` / `RosActionView`)
+  are the public type contract: generated message classes and downstream
+  code satisfy them **structurally**, without inheriting from zros2.
+
+### Private implementation
+
+- Implementation modules are `_`-prefixed (`_client.py`, `endpoints/_publisher.py`,
+  `types/_protocols.py`, `generator/**/_*.py`, `_cli.py`); private symbols
+  are `_`-prefixed and never enter `__all__`.
+- Internal modules may be renamed / moved freely — the public import paths
+  (via `__init__.py` re-exports) must not change. Do **not** keep
+  compatibility shims for symbols that already live in a subpackage.
+- **Documentation is a contract**: README and docstring examples must never
+  show imports from `_`-prefixed modules (e.g. `zros2.types._utils`,
+  `zros2._session`). If a capability is needed by downstream, promote it to
+  the public surface first.
+
+### Codegen ↔ runtime ABI
+
+- The generator hardcodes imports of runtime symbols into generated
+  output; those references form a **generation ABI** — renaming or
+  moving a symbol breaks already-generated code.  The authoritative
+  whitelist is `RUNTIME_CONTRACT` in `tests/test_runtime_contract.py`:
+  - `zros2.types` → `RosMessage`, `ServiceTypes`, `ActionTypes`
+  - `zros2.types._utils` → `from_attributes` (the only `_`-prefixed
+    symbol in the ABI: private-module moves must regenerate output).
+- Changing either side (generator output or runtime symbol) requires
+  updating the whitelist in the same change; the contract tests fail
+  loudly otherwise.
+
+### Type-system rules
+
+- Generics use **PEP 695 type-parameter syntax** bound to `RosMessage`
+  (`class Publisher[MsgT: RosMessage]`, `def create_publisher[MsgT: RosMessage](...)`).
+  No shared module-level TypeVars are defined or exported — each class or
+  function declares its own.
+- `RosActionView` is the 3-parameter semantic view of an action type
+  (`GoalT` / `ResultT` / `FeedbackT`) for generic consumer code that
+  forwards goals or observes results/feedback without touching the 5
+  transport sub-types.
+- `@runtime_checkable` performs mere presence checks: `isinstance` on the
+  member protocols (`RosService`, `RosAction`, `RosActionView`) only tests
+  `hasattr` for `Request` / `Response` / `Goal` / etc. and must not be used
+  for runtime validation. Use structural protocols over ABCs; runtime
+  `isinstance` checks only where genuinely needed.
+
+### Change checklist
+
+Adding or removing a public symbol requires updating, in one change:
+1. the owning package `__init__.py` and its `__all__`;
+2. the README (protocol table / usage examples);
+3. `.rules`;
+4. the contract whitelist in `tests/test_runtime_contract.py` when the
+   generator hardcodes a reference to it.
+
+## Coding Conventions
+
+### General Style
+
+- **Python 3.12 modern syntax preferred** — use the current PEPs: PEP 695
+  type-parameter syntax (`class C[T]`, `def f[T]`, `type` aliases), PEP 673
+  (`Self`), PEP 604 (`X | Y` unions), PEP 698 (`typing.override`), PEP 692
+  (TypedDict `**kwargs`), PEP 654 (`ExceptionGroup`), PEP 646
+  (`TypeVarTuple`). Avoid legacy forms: `Optional[X]` / `Union[X, Y]`,
+  `typing.List`/`Dict`/`Tuple`, shared module-level TypeVars.
+- **Type hints are mandatory** on all function signatures and public class attributes.
+- **Double-quoted strings** (`"..."`) consistently, including docstrings and error messages.
+- **Module-level docstring** in every `.py` file describing its purpose.
+- **Public API is explicit** — use `__all__` in every `__init__.py`.
+- **Docstrings follow Google style** with `Args:`, `Raises:`, `Returns:` sections.
+- **Line length:** soft 88, hard 99 (consistent with project style).
+- **Naming:**
+  - `snake_case` for functions, methods, variables.
+  - `PascalCase` for classes, protocols, dataclasses.
+  - `UPPER_CASE` for constants and ROS constant field names.
+  - Private symbols prefixed with `_` (e.g. `_do_internal`).
+  - Non-public modules prefixed with `_` (see "Public / Private API Design").
+
+### Type System & Protocols
+
+- **`RosMessage`** — the base protocol for all message dataclasses. Use `@runtime_checkable` protocol with `serialize()`, `deserialize()`, `from_dict()`, `to_dict()`.
+- **Prefer structural typing** via protocols over ABCs. Use `isinstance(x, RosMessage)` only when a runtime check is genuinely needed.
+
+### Type Checking
+
+- `pyrightconfig.json` pins the checking policy: `reportUnusedFunction` is
+  enabled project-wide; unknown-type rules are **not** enabled for
+  `tests/` and `benchmarks/` (mock-heavy code legitimately produces
+  `Unknown`).
+- `# pyright: ignore[...]` comments are only added where the rule actually
+  fires (or defensively for a documented reason); always name the rule.
+
+### Error Handling
+
+- **Exception hierarchy** rooted at `ZRos2Exception`:
+  ```
+  ZRos2Exception
+  ├── ServiceException
+  │   ├── ServiceNotAvailableException
+  │   └── ServiceInvokeException
+  └── ActionException
+      ├── ActionNotAvailableException
+      └── ActionInvokeException
+  ```
+- Raise specific exceptions; catch broadly only at public API boundaries.
+- **Context managers** must be idempotent (`destroy()` checks for `None` before undeclaring).
+
+### Imports
+
+- **Standard library first**, then third-party, then local (separated by blank lines).
+- **Absolute imports** preferred. Within the same package, relative imports are acceptable.
+- Import classes/functions, not modules, unless documented otherwise.
+- Type-only imports: `from typing import ...` or use `TYPE_CHECKING` guards for runtime.
+
+### Testing
+
+- **pytest** — no `unittest.TestCase`, use plain `class TestXxx:` groups.
+- Test file naming: `test_<module_name>.py`, test function naming: `test_<scenario>`.
+- **Test class names**: `TestPascalCase` describing the unit under test.
+- **Fixtures** in `conftest.py`; prefer `pytest.fixture` over `setup_method`.
+- Use descriptive test method names in `snake_case` (e.g. `test_generated_code_works`).
+
+### Code Generation (`zros2/generator/`)
+
+- Generated Python is built with the **`ast` module** — no string templating.
+- Built-in ROS 2 types are bundled per distro in `assets/builtin_msgs/`.
+- Supported distros: `humble`, `iron`, `jazzy`, `kilted`, `lyrical`.
+- Generation flow: CLI → `pipeline.build_plan` → codegen → `pipeline.writer`.
+- Package boundaries:
+  - `parsing/` produces models (``.action`` files yield ``ActionSource``:
+    goal / result / feedback only)
+  - `semantics/` resolves types / defaults / naming helpers, and expands
+    actions into the eight ROS 2 types (``expand_action`` / ``ACTION_SPEC``)
+  - `codegen/` turns models into AST/source
+  - `pipeline/` owns collect/merge/validate/write orchestration
+- Use `pycdr2.IdlMeta` metaclass for generated dataclasses.
+
+## Commit & PR Conventions
+
+- **Commit messages**: imperative mood, capitalised, ≤ 72 chars subject line.
+  - Good: `Add bounded string support to parser`
+  - Bad: `fixed bug` or `more changes`
+- **Scope prefixes** encouraged: `parser:`, `codegen:`, `types:`, `docs:`, `test:`.
+
+## Pre-Commit Checklist
+
+Run these checks before every commit:
+
+- [ ] **Full test suite** — `pytest` passes with no new failures.
+- [ ] **Type checking** — `npx pyright` (or the IDE language server) reports
+  **0 errors and 0 warnings** for the whole project, including touched and
+  affected files.
+- [ ] **Public API completeness** — if public symbols changed: the owning
+  package `__init__.py` + `__all__`, the README (protocol table / usage
+  examples), `.rules`, and the contract whitelist in
+  `tests/test_runtime_contract.py` are all updated in the same change.
+- [ ] **Contract tests** — `tests/test_runtime_contract.py` passes: every
+  `zros2.*` import the generator hardcodes still resolves against the
+  runtime.
+- [ ] **Generator smoke test** — if the generator changed: `python -m
+  zros2.generator --help` runs, and `pytest benchmarks/ --benchmark-only`
+  still collects (96 tests) — run it fully when generation output changed.
+- [ ] **Documentation is a contract** — no `_`-prefixed private module imports
+  (e.g. `zros2.types._utils`, `zros2._session`) in README or docstring
+  examples.
+- [ ] **No dead code** — new `_`-prefixed functions are either exercised by
+  tests (then the named `# pyright: ignore[reportUnusedFunction]` is
+  justified) or removed; no silently unused code.
+- [ ] **Diff review** — `git --no-pager diff` shows only intended changes: no
+  stray files, debug leftovers, or unrelated edits.
+- [ ] **Commit message** — imperative mood, ≤ 72-char subject line, scope
+  prefix per Commit & PR Conventions above.
+
+## AI Agent Working Conventions
+
+1. **Read before write** — always read existing files/signatures before editing.
+2. **Match project style** — mirror the codebase's existing patterns, don't introduce new styles.
+3. **Preserve `__all__`** — update it when adding/removing public symbols.
+4. **Update tests** — any new feature or bug fix should include or update tests.
+5. **Keep `.rules` in sync** — update this file when establishing new conventions.
+6. **Run `pytest`** before concluding a task to verify nothing is broken.
+7. **No unnecessary comments** — don't add comments that merely restate what the code does.
+8. **Prefer surgical edits** — change only what's needed to solve the task.
+9. **Exception:** don't fix unrelated bugs unless they block the task.
+10. **Docstrings for public APIs only** — internal functions/methods use minimal or no docstring.
+11. **Language server must stay clean** — after any change, pyright (and the
+    IDE language server) must report **0 errors and 0 warnings** for the
+    project, including touched and affected files. Do not leave new
+    diagnostics behind; if a diagnostic is intentional, suppress it with a
+    named `# pyright: ignore[...]` and a reason.

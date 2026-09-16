@@ -494,33 +494,36 @@ class TestParseSrvFile:
 
 
 class TestParseActionFile:
-    """Action file parsing (8 sub-types)."""
+    """Action file parsing (three user sections only)."""
 
-    def test_yields_eight_definitions(self, tmp_path):
+    def test_returns_action_source(self, tmp_path):
         path = tmp_path / "Fibonacci.action"
         path.write_text("int32 order\n---\nint32[] sequence\n---\nint32[] sequence\n")
-        results = parse_action_file(path, "test")
-        assert len(results) == 8
+        source = parse_action_file(path, "test")
+        assert source.package == "test"
+        assert source.type_name == "Fibonacci"
+        assert source.goal.type_name == "Fibonacci_Goal"
+        assert source.result.type_name == "Fibonacci_Result"
+        assert source.feedback.type_name == "Fibonacci_Feedback"
 
-    def test_sub_type_names(self, tmp_path):
+    def test_does_not_synthesize_transport_types(self, tmp_path):
         path = tmp_path / "Do.action"
         path.write_text("int32 input\n---\nint32 result\n---\nfloat32 feedback\n")
-        results = parse_action_file(path, "test")
-        names = {r.type_name for r in results}
-        assert "Do_Goal" in names
-        assert "Do_Result" in names
-        assert "Do_Feedback" in names
-        assert "Do_FeedbackMessage" in names
-        assert "Do_SendGoal_Request" in names
-        assert "Do_SendGoal_Response" in names
-        assert "Do_GetResult_Request" in names
-        assert "Do_GetResult_Response" in names
+        source = parse_action_file(path, "test")
+        names = {
+            source.goal.type_name,
+            source.result.type_name,
+            source.feedback.type_name,
+        }
+        assert names == {"Do_Goal", "Do_Result", "Do_Feedback"}
+        assert not any("SendGoal" in n for n in names)
+        assert not any("FeedbackMessage" in n for n in names)
 
     def test_full_name_uses_action(self, tmp_path):
         path = tmp_path / "Foo.action"
         path.write_text("---\n---\n")
-        results = parse_action_file(path, "test")
-        for defn in results:
+        source = parse_action_file(path, "test")
+        for defn in (source.goal, source.result, source.feedback):
             assert "/action/" in defn.full_name
             assert defn.type_kind == "action"
 
@@ -533,18 +536,8 @@ class TestParseActionFile:
     def test_goal_has_user_field(self, tmp_path):
         path = tmp_path / "Foo.action"
         path.write_text("int32 order\n---\nint32 result\n---\nfloat32 feedback\n")
-        results = parse_action_file(path, "test")
-        goal = next(r for r in results if r.type_name == "Foo_Goal")
-        assert any(f.name == "order" for f in goal.fields)
-
-    def test_send_goal_request_has_goal_id_and_goal(self, tmp_path):
-        path = tmp_path / "Bar.action"
-        path.write_text("---\n---\n")
-        results = parse_action_file(path, "test")
-        sg_req = next(r for r in results if r.type_name == "Bar_SendGoal_Request")
-        field_names = [f.name for f in sg_req.fields]
-        assert "goal_id" in field_names
-        assert "goal" in field_names
+        source = parse_action_file(path, "test")
+        assert any(f.name == "order" for f in source.goal.fields)
 
 
 # ======================================================================
@@ -940,30 +933,27 @@ class TestParseActionBoundary:
         """All three sections empty: ---\n---\n."""
         path = tmp_path / "Empty.action"
         path.write_text("---\n---\n")
-        results = parse_action_file(path, "test")
-        assert len(results) == 8
-        # Goal, Result, Feedback all have zero fields
-        for defn in results[:7]:
-            assert len(defn.fields) >= 0
+        source = parse_action_file(path, "test")
+        assert source.goal.fields == []
+        assert source.result.fields == []
+        assert source.feedback.fields == []
 
     def test_feedback_section_only(self, tmp_path):
         """Only feedback section has fields; goal and result are empty."""
         path = tmp_path / "FeedbackOnly.action"
         path.write_text("\n---\n\n---\nfloat32 progress\n")
-        results = parse_action_file(path, "test")
-        feedback = next(r for r in results if r.type_name.endswith("_Feedback"))
-        assert len(feedback.fields) == 1
-        assert feedback.fields[0].name == "progress"
+        source = parse_action_file(path, "test")
+        assert len(source.feedback.fields) == 1
+        assert source.feedback.fields[0].name == "progress"
 
     def test_result_section_with_constants(self, tmp_path):
         """Result section has both constants and fields."""
         path = tmp_path / "ResultConst.action"
         path.write_text("---\nint32 CODE=42\nint32 value\n---\n")
-        results = parse_action_file(path, "test")
-        result = next(r for r in results if r.type_name.endswith("_Result"))
-        assert len(result.constants) == 1
-        assert result.constants[0].name == "CODE"
-        assert len(result.fields) == 1
+        source = parse_action_file(path, "test")
+        assert len(source.result.constants) == 1
+        assert source.result.constants[0].name == "CODE"
+        assert len(source.result.fields) == 1
 
     def test_package_empty_raises(self, tmp_path):
         """Action file with empty package must raise ValueError."""

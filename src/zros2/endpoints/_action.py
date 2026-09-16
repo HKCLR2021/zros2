@@ -18,6 +18,7 @@ from .._session import ZenohSessionProxy
 from ..exceptions import ActionInvokeException, ServiceException
 from ..types._base import RosMessage
 from ..types._protocols import GetResultRequest, RosAction, RosService, SendGoalRequest
+from ._action_keys import ActionChannel, action_key
 from ._service import ServiceClient
 from ._subscriber import Subscriber
 
@@ -142,12 +143,12 @@ class Action[
         self._status_callback: Callable[[GoalStatusArray], None] | None = None
         self._feedback_subscriber = Subscriber[FBMsgT](
             zenoh_session,
-            f"{self._action_name}/_action/feedback",
+            action_key(self._action_name, ActionChannel.FEEDBACK),
             self._action_types.FeedbackMessage,
         )
         self._status_subscriber = Subscriber[GoalStatusArray](
             zenoh_session,
-            f"{self._action_name}/_action/status",
+            action_key(self._action_name, ActionChannel.STATUS),
             GoalStatusArray,
         )
 
@@ -197,8 +198,8 @@ class Action[
         """Set the status callback and subscribe to the status topic.
 
         The callback receives every ``GoalStatusArray`` published on
-        ``{action_name}/_action/status`` (set to ``None`` to stop
-        receiving).
+        ``{action_name}/_action/status`` (see :func:`action_key`; set to
+        ``None`` to stop receiving).
         """
         with self._lock:
             self._status_callback = callback_func
@@ -288,7 +289,7 @@ class Action[
             )
             service_client = ServiceClient[SGReqT, SGResT](
                 self._zenoh_session,
-                f"{self._action_name}/_action/send_goal",
+                action_key(self._action_name, ActionChannel.SEND_GOAL),
                 send_goal_service,
             )
 
@@ -359,7 +360,7 @@ class Action[
             )
             service_client = ServiceClient[CancelGoal_Request, CancelGoal_Response](
                 self._zenoh_session,
-                f"{self._action_name}/_action/cancel_goal",
+                action_key(self._action_name, ActionChannel.CANCEL_GOAL),
                 cancel_service,
             )
             try:
@@ -399,7 +400,7 @@ class Action[
             )
             service_client = ServiceClient[GRReqT, GRResT](
                 self._zenoh_session,
-                f"{self._action_name}/_action/get_result",
+                action_key(self._action_name, ActionChannel.GET_RESULT),
                 get_result_service,
             )
 

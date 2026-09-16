@@ -8,7 +8,7 @@ import pathlib
 
 from lark import LarkError
 
-from ._models import MsgDefinition, MsgField
+from ._models import ActionSource, MsgDefinition, MsgField
 from ._types import ROS2_PRIMITIVE_TYPES, parse_type
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -406,15 +406,15 @@ def parse_srv_file(
     return request, response
 
 
-def parse_action_file(
-    file_path: pathlib.Path, package: str
-) -> tuple[MsgDefinition, ...]:
-    """Parse a single ``.action`` file.
+def parse_action_file(file_path: pathlib.Path, package: str) -> ActionSource:
+    """Parse a single ``.action`` file into its three user sections.
 
-    Returns **seven** ``MsgDefinition`` entries:
+    Does **not** synthesize transport types.  Call
+    :func:`zros2.generator.semantics.expand_action` to obtain the eight
+    ROS 2 action ``MsgDefinition`` values used for code generation.
 
-    ``(Goal, Result, SendGoal_Request, SendGoal_Response,
-      GetResult_Request, GetResult_Response, Feedback)``
+    Returns:
+        An :class:`ActionSource` holding Goal / Result / Feedback.
     """
     if not package:
         raise ValueError("package name must not be empty")
@@ -431,65 +431,34 @@ def parse_action_file(
     base_name = file_path.stem
 
     try:
-        definitions = {
-            f"{base_name}_Goal": parse_msg_text(
-                goal_text,
-                package=package,
-                type_name=f"{base_name}_Goal",
-                type_kind="action",
-            ),
-            f"{base_name}_Result": parse_msg_text(
-                result_text,
-                package=package,
-                type_name=f"{base_name}_Result",
-                type_kind="action",
-            ),
-            f"{base_name}_Feedback": parse_msg_text(
-                feedback_text,
-                package=package,
-                type_name=f"{base_name}_Feedback",
-                type_kind="action",
-            ),
-            # ── FeedbackMessage ───────────────────────────────────────────
-            f"{base_name}_FeedbackMessage": parse_msg_text(
-                f"uint8[16] goal_id\n{package}/action/{base_name}_Feedback feedback",
-                package=package,
-                type_name=f"{base_name}_FeedbackMessage",
-                type_kind="action",
-            ),
-            # ── SendGoal_Request ──────────────────────────────────────────
-            f"{base_name}_SendGoal_Request": parse_msg_text(
-                f"uint8[16] goal_id\n{package}/action/{base_name}_Goal goal",
-                package=package,
-                type_name=f"{base_name}_SendGoal_Request",
-                type_kind="action",
-            ),
-            # ── SendGoal_Response ─────────────────────────────────────────
-            f"{base_name}_SendGoal_Response": parse_msg_text(
-                "bool accepted\nbuiltin_interfaces/msg/Time stamp",
-                package=package,
-                type_name=f"{base_name}_SendGoal_Response",
-                type_kind="action",
-            ),
-            # ── GetResult_Request ─────────────────────────────────────────
-            f"{base_name}_GetResult_Request": parse_msg_text(
-                "uint8[16] goal_id",
-                package=package,
-                type_name=f"{base_name}_GetResult_Request",
-                type_kind="action",
-            ),
-            # ── GetResult_Response ────────────────────────────────────────
-            f"{base_name}_GetResult_Response": parse_msg_text(
-                f"int8 status\n{package}/action/{base_name}_Result result",
-                package=package,
-                type_name=f"{base_name}_GetResult_Response",
-                type_kind="action",
-            ),
-        }
+        goal = parse_msg_text(
+            goal_text,
+            package=package,
+            type_name=f"{base_name}_Goal",
+            type_kind="action",
+        )
+        result = parse_msg_text(
+            result_text,
+            package=package,
+            type_name=f"{base_name}_Result",
+            type_kind="action",
+        )
+        feedback = parse_msg_text(
+            feedback_text,
+            package=package,
+            type_name=f"{base_name}_Feedback",
+            type_kind="action",
+        )
     except ValueError as exc:
         raise ValueError(f"{file_path}: {exc}") from exc
 
-    return tuple(definitions.values())
+    return ActionSource(
+        package=package,
+        type_name=base_name,
+        goal=goal,
+        result=result,
+        feedback=feedback,
+    )
 
 
 __all__ = [

@@ -34,7 +34,23 @@ class MsgDefinition:
             self.full_name = f"{self.package}/{self.type_kind}/{self.type_name}"
 
 
+@dataclass(frozen=True)
+class ActionSource:
+    """Parsed ``.action`` file: the three user sections only.
+
+    Transport types (``SendGoal_*``, ``GetResult_*``, ``FeedbackMessage``)
+    are added by :func:`zros2.generator.semantics.expand_action`.
+    """
+
+    package: str
+    type_name: str
+    goal: MsgDefinition
+    result: MsgDefinition
+    feedback: MsgDefinition
+
+
 __all__ = [
+    "ActionSource",
     "MsgDefinition",
     "MsgField",
 ]

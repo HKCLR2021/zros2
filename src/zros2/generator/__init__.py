@@ -14,6 +14,7 @@ Usage:
 
 from .parsing import (
     VALID_DISTROS,
+    ActionSource,
     MsgDefinition,
     MsgField,
     parse_action_file,
@@ -22,13 +23,15 @@ from .parsing import (
     parse_srv_file,
 )
 from .pipeline import generate_all
-from .semantics import ResolvedType, resolve_type
+from .semantics import ResolvedType, expand_action, resolve_type
 
 __all__ = [
     "VALID_DISTROS",
+    "ActionSource",
     "MsgDefinition",
     "MsgField",
     "ResolvedType",
+    "expand_action",
     "generate_all",
     "parse_action_file",
     "parse_msg_file",

@@ -13,13 +13,13 @@ from ..codegen._message import GeneratedFile, generate_message_module
 from ..codegen._package_init import generate_init_module, generate_package_init
 from ..codegen._registry import REGISTRY_AST
 from ..codegen._service_action import (
-    ACTION_SUFFIXES,
     SRV_SUFFIXES,
     generate_action_wrappers,
     generate_service_wrappers,
 )
 from ..codegen._stubs import generate_stub_module
 from ..parsing._models import MsgDefinition
+from ..semantics._action import ACTION_SUFFIXES, ACTION_WIRE_SUFFIXES
 from ..semantics._utilities import (
     generated_metadata_stmts,
     header_comment,
@@ -187,11 +187,7 @@ def generate_all(
                 all_names = [
                     tn
                     for tn in type_names
-                    if not tn.endswith("_FeedbackMessage")
-                    and not tn.endswith("_SendGoal_Request")
-                    and not tn.endswith("_SendGoal_Response")
-                    and not tn.endswith("_GetResult_Request")
-                    and not tn.endswith("_GetResult_Response")
+                    if not any(tn.endswith(s) for s in ACTION_WIRE_SUFFIXES)
                 ] + wrapper_names
             else:
                 all_names = type_names.copy()

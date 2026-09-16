@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from zros2.endpoints import Action, GoalHandle
+from zros2.endpoints._action_keys import ActionChannel, action_key
 from zros2.exceptions import ActionInvokeException
 from zros2.types import RosAction
 
@@ -293,3 +294,23 @@ class TestAction:
         action.status_callback = None
         action._forward_status(status_array)
         assert received == [status_array]
+
+
+class TestActionKeys:
+    """Transport mapping for the five ROS 2 action channels."""
+
+    def test_key_layout(self):
+        assert action_key("/fib", ActionChannel.SEND_GOAL) == "/fib/_action/send_goal"
+        assert action_key("/fib", ActionChannel.GET_RESULT) == "/fib/_action/get_result"
+        assert (
+            action_key("/fib", ActionChannel.CANCEL_GOAL) == "/fib/_action/cancel_goal"
+        )
+        assert action_key("/fib", ActionChannel.FEEDBACK) == "/fib/_action/feedback"
+        assert action_key("/fib", ActionChannel.STATUS) == "/fib/_action/status"
+
+    def test_action_uses_mapped_keys(self):
+        session = MagicMock()
+        session.is_closed.return_value = False
+        action = Action(session, "/fib", _mock_action, timeout=3000)
+        assert action._feedback_subscriber._topic == "/fib/_action/feedback"
+        assert action._status_subscriber._topic == "/fib/_action/status"

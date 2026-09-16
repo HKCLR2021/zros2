@@ -274,7 +274,7 @@ class TestCollectAllTypes:
         )
         types = collect_all_types([pkg])
         action_keys = [k for k in types if "action" in k]
-        # parse_action_file returns 8 sub-types
+        # collect_all_types expands each .action into 8 sub-types
         assert len(action_keys) == 8
 
     def test_skips_non_existent_dirs(self, tmp_path):

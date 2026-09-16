@@ -60,6 +60,7 @@ import ast
 import pathlib
 
 from ..parsing._models import MsgDefinition
+from ..semantics._action import ACTION_SUFFIXES
 from ..semantics._utilities import (
     generated_metadata_stmts,
     header_comment,
@@ -71,28 +72,13 @@ from ._stubs import generate_stub_module
 # ---------------------------------------------------------------------------
 # Suffix constants
 # ---------------------------------------------------------------------------
-# These define which sub-type names belong to a service or action family.
-# When scanning the flat list of all generated types, the wrapper generators
-# look for a "leader" type (e.g. ``Foo_Request`` for services) and then
-# validate that every suffix in the corresponding tuple exists.
-#
-# ``SRV_SUFFIXES`` — every service has exactly two sub-types.
-# ``ACTION_SUFFIXES`` — every action has eight sub-types:
-#   Goal, Result, Feedback, FeedbackMessage for the goal/result/feedback
-#   message types, plus SendGoal_Request/Response and GetResult_Request/Response
-#   for the two internal service pairs that ROS 2 actions are built on.
+# Service families have exactly two sub-types, owned here because they
+# come from the ``.srv`` file itself (no IDL expansion).
+# Action families have eight sub-types; the tuple is defined by
+# :mod:`zros2.generator.semantics._action` (the IDL expansion spec) and
+# re-exported so existing codegen imports keep working.
 
 SRV_SUFFIXES = ("_Request", "_Response")
-ACTION_SUFFIXES = (
-    "_Goal",
-    "_Result",
-    "_Feedback",
-    "_FeedbackMessage",
-    "_SendGoal_Request",
-    "_SendGoal_Response",
-    "_GetResult_Request",
-    "_GetResult_Response",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -653,7 +639,7 @@ def generate_action_wrappers(
     | ``Foo_Goal``              | Goal message fields                   |
     | ``Foo_Result``            | Result message fields                 |
     | ``Foo_Feedback``          | Feedback message fields               |
-    | ``Foo_FeedbackMessage``   | Feedback wrapper (seq_id + feedback)  |
+    | ``Foo_FeedbackMessage``   | Feedback wrapper (goal_id + feedback) |
     | ``Foo_SendGoal_Request``  | Request for the SendGoal service      |
     | ``Foo_SendGoal_Response`` | Response for the SendGoal service     |
     | ``Foo_GetResult_Request`` | Request for the GetResult service     |

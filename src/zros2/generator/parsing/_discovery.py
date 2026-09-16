@@ -10,6 +10,7 @@ import re
 from collections.abc import Iterator
 
 from ..assets import BUILTIN_MSG_DIR
+from ..semantics._action import expand_action
 from ._models import MsgDefinition
 from ._parser import (
     parse_action_file,
@@ -191,9 +192,11 @@ def collect_all_types(
             types[response.full_name] = response
 
         # -- Actions --
+        # Parser yields the three user sections; expansion adds the five
+        # transport types so dependency validation sees the full set.
         action_dir = pkg_dir / "action"
         for _, file_path in iter_action_files(action_dir):
-            for defn in parse_action_file(file_path, package):
+            for defn in expand_action(parse_action_file(file_path, package)):
                 types[defn.full_name] = defn
 
     return types

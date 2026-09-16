@@ -9,6 +9,7 @@ import pytest
 from zros2.generator import (
     MsgDefinition,
     MsgField,
+    expand_action,
     generate_all,
     parse_action_file,
     parse_msg_text,
@@ -93,8 +94,10 @@ class TestParseActionFile:
         action_path.write_text(
             "int32 order\n---\nint32[] sequence\n---\nint32[] sequence\n"
         )
-        results = parse_action_file(action_path, "test")
-        names = [r.type_name for r in results]
+        source = parse_action_file(action_path, "test")
+        assert source.type_name == "Fibonacci"
+        assert source.feedback.type_name == "Fibonacci_Feedback"
+        names = [d.type_name for d in expand_action(source)]
         assert "Fibonacci_SendGoal_Request" in names
         assert "Fibonacci_SendGoal_Response" in names
         assert "Fibonacci_GetResult_Request" in names

@@ -615,8 +615,8 @@ usage: zros2-gen [-h] --msg-dirs MSG_DIRS --output OUTPUT
 ### Programmatic API
 
 ```python
-from zros2.generator.parsing import parse_msg_text, MsgDefinition
-from zros2.generator.semantics import resolve_type
+from zros2.generator.parsing import parse_msg_text, MsgDefinition, ActionSource
+from zros2.generator.semantics import expand_action, resolve_type
 from zros2.generator.codegen import (
     generate_message_module,
     generate_init_module,

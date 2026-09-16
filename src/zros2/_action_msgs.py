@@ -17,7 +17,9 @@ The ROS 2 definitions they mirror:
 
 ``GoalInfo.goal_id`` is declared as ``array[uint8, 16]`` instead of the
 ``unique_identifier_msgs/UUID`` message — the CDR encoding is identical
-(16 raw bytes) and it avoids a second built-in type.
+(16 raw bytes) and it avoids a second built-in type.  This matches
+``GOAL_ID_TYPE`` in :mod:`zros2.generator.semantics._action`, the
+generator's IDL expansion spec.
 
 The layout mirrors the zros2 generator's output (``@dataclass(init=False)``
 with a hand-written ``__init__``) so the built-ins behave identically to
