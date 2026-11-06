@@ -436,7 +436,8 @@ assets. Before committing locally, tests and pyright must be green.
 
 `.github/workflows/release.yml` runs when a tag matching `v*` is pushed. It
 checks that the tag (`vX.Y.Z`) matches `pyproject.toml`, runs the full test
-suite, builds a `py3-none-any` wheel with `python -m build --wheel`, and creates
+suite, builds a `py3-none-any` wheel with `python -m build --wheel` under
+Python 3.12 (the minimum supported version), and creates
 a **draft** GitHub Release with the wheel attached. Review the draft and click
 Publish when ready. zros2 is pure Python, so one wheel covers all
 OSes/architectures. It is not published to PyPI.

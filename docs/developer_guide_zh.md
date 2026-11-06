@@ -287,7 +287,7 @@ pytest benchmarks/ --benchmark-only --collect-only
 
 `.github/workflows/ci.yml`：push / PR 到 `master` 触发（`*.md` 与 `docs/**` 变更不触发）；Python **3.12 / 3.13 / 3.14** matrix；`pip install -e ".[dev]"`；运行 `pytest tests/`（覆盖率门槛 95%）并产出 `coverage.xml`；独立 `type-check` job 运行 `pyright`；独立 `package` job 构建 wheel、安装并验证内置 assets。本地提交前至少保证测试与 pyright 全绿。
 
-`.github/workflows/release.yml`：推送匹配 `v*` 的 tag 时触发。校验 tag（`vX.Y.Z`）与 `pyproject.toml` 的 `version` 一致，跑完整测试，再 `python -m build --wheel` 打出 `py3-none-any` wheel，并创建带该 wheel 的 **draft** GitHub Release。确认后手动点 Publish。zros2 是纯 Python，一份 wheel 覆盖各 OS / 架构；不发布到 PyPI。
+`.github/workflows/release.yml`：推送匹配 `v*` 的 tag 时触发。校验 tag（`vX.Y.Z`）与 `pyproject.toml` 的 `version` 一致，跑完整测试，再用 Python 3.12（最低支持版本）`python -m build --wheel` 打出 `py3-none-any` wheel，并创建带该 wheel 的 **draft** GitHub Release。确认后手动点 Publish。zros2 是纯 Python，一份 wheel 覆盖各 OS / 架构；不发布到 PyPI。
 
 发版步骤：
 
