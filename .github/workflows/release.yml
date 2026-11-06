@@ -1,15 +1,16 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
   publish-wheel:
-    name: Build and upload wheel
+    name: Build and create draft release
     runs-on: ubuntu-latest
 
     steps:
@@ -42,12 +43,13 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -q
 
-      - name: Build sdist and wheel
-        run: python -m build
+      - name: Build wheel
+        run: python -m build --wheel
 
-      - name: Upload artifacts to the GitHub Release
+      - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/*.whl
-            dist/*.tar.gz
+          draft: true
+          generate_release_notes: true
+          name: ${{ github.ref_name }}
+          files: dist/*.whl

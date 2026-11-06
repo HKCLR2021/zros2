@@ -434,18 +434,20 @@ uploads `coverage.xml`, runs a separate `type-check` job with `pyright`, and a
 separate `package` job that builds a wheel, installs it, and verifies bundled
 assets. Before committing locally, tests and pyright must be green.
 
-`.github/workflows/release.yml` runs when a GitHub Release is **published**. It
+`.github/workflows/release.yml` runs when a tag matching `v*` is pushed. It
 checks that the tag (`vX.Y.Z`) matches `pyproject.toml`, runs the full test
-suite, builds a `py3-none-any` wheel and an sdist with `python -m build`, and
-attaches them to the Release. zros2 is pure Python, so one wheel covers all
+suite, builds a `py3-none-any` wheel with `python -m build --wheel`, and creates
+a **draft** GitHub Release with the wheel attached. Review the draft and click
+Publish when ready. zros2 is pure Python, so one wheel covers all
 OSes/architectures. It is not published to PyPI.
 
 Release steps:
 
-1. set `pyproject.toml` `version` to the target version (e.g. `2.0.0`);
+1. set `pyproject.toml` `version` to the target version (e.g. `2.0.0`) and
+   commit it;
 2. create and push the tag: `git tag v2.0.0 && git push origin v2.0.0`;
-3. publish a GitHub Release on that tag (or `gh release create v2.0.0`). The
-   workflow attaches `zros2-2.0.0-py3-none-any.whl`.
+3. the workflow creates a draft Release with
+   `zros2-2.0.0-py3-none-any.whl`; review the notes and Publish.
 
 ---
 
