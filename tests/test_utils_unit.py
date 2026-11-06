@@ -157,9 +157,9 @@ class TestFromAttributes:
         with pytest.raises(KeyError, match="Missing required field 'inner'"):
             from_attributes(_OuterMsg, obj)
 
-    def test_non_dataclass_asserts(self):
-        """Passing a non-dataclass type triggers ``AssertionError``."""
-        with pytest.raises(AssertionError):
+    def test_non_dataclass_raises_type_error(self):
+        """Passing a non-dataclass type triggers ``TypeError``."""
+        with pytest.raises(TypeError, match="must be a dataclass"):
             from_attributes(int, None)  # type: ignore[arg-type]
 
     def test_type_field_none_fallback_patched(self):

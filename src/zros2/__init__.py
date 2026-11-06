@@ -1,5 +1,7 @@
 """zros2 — lightweight ROS2-like communication over Zenoh."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from zenoh import Reply, Sample, SampleKind
 
 from . import exceptions
@@ -21,6 +23,11 @@ from .types import (
     RosService,
     ServiceTypes,
 )
+
+try:
+    __version__ = version("zros2")
+except PackageNotFoundError:  # source tree without installed metadata
+    __version__ = "0.0.0"
 
 __all__ = [
     "Action",
@@ -46,5 +53,6 @@ __all__ = [
     "ServiceTypes",
     "Subscriber",
     "ZRosClient",
+    "__version__",
     "exceptions",
 ]

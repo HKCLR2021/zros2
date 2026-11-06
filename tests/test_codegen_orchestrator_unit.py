@@ -21,10 +21,10 @@ from zros2.generator.parsing._discovery import (
     _resolve_full_name,
     _strip_wrappers,
     builtin_msg_dirs,
-    collect_all_types,
     validate_dependencies,
 )
 from zros2.generator.parsing._models import MsgDefinition, MsgField
+from zros2.generator.pipeline._collect import collect_all_types
 from zros2.generator.pipeline._generate import generate_all
 from zros2.generator.pipeline._writer import write_generated_files
 

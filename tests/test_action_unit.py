@@ -7,7 +7,10 @@ import pytest
 
 from zros2.endpoints import Action, GoalHandle
 from zros2.endpoints._action_keys import ActionChannel, action_key
-from zros2.exceptions import ActionInvokeException
+from zros2.exceptions import (
+    ActionNotAvailableException,
+    ActionTimeoutException,
+)
 from zros2.types import RosAction
 
 
@@ -84,7 +87,7 @@ class TestAction:
         """_make_srv_type should reuse the class for identical inputs."""
         from typing import cast
 
-        from zros2.endpoints._action import _make_srv_type
+        from zros2.endpoints._action_transport import _make_srv_type
         from zros2.types import RosMessage
 
         request = cast(type[RosMessage], _MockActionType.SendGoal_Request)
@@ -117,15 +120,15 @@ class TestAction:
         action.feedback_callback = my_callback
         assert action.feedback_callback is my_callback
 
-    def test_send_goal_raises_action_invoke_exception(self):
-        """send_goal should wrap ServiceException in ActionInvokeException."""
+    def test_send_goal_raises_action_timeout_exception(self):
+        """send_goal should report a timeout as an action timeout."""
         session = MagicMock()
         session.is_closed.return_value = False
         # Make get return empty iterator (service unavailable)
         session.get.return_value = iter([])
 
         action = Action(session, "test/action", _mock_action, timeout=3000)
-        with pytest.raises(ActionInvokeException):
+        with pytest.raises(ActionTimeoutException):
             action.send_goal()
 
     def test_send_goal_with_feedback_callback(self):
@@ -139,7 +142,7 @@ class TestAction:
 
         action = Action(session, "test/action", _mock_action, timeout=3000)
         action.feedback_callback = lambda msg: None
-        with pytest.raises(ActionInvokeException):
+        with pytest.raises(ActionTimeoutException):
             action.send_goal()
         # feedback_subscriber.subscribe was called
         assert action._feedback_subscriber._subscriber is not None
@@ -155,19 +158,19 @@ class TestAction:
 
         action = Action(session, "test/action", _mock_action, timeout=3000)
         goal = _MockActionType.Goal()
-        with pytest.raises(ActionInvokeException):
+        with pytest.raises(ActionTimeoutException):
             action.send_goal(goal=goal)
 
-    def test_get_result_raises_action_invoke_exception(self):
-        """get_result should wrap ServiceException in ActionInvokeException."""
+    def test_get_result_raises_action_not_available_exception(self):
+        """No result reply with no timeout means the action is unavailable."""
         session = MagicMock()
         session.is_closed.return_value = False
         session.get.return_value = iter([])
 
         action = Action(session, "test/action", _mock_action, timeout=3000)
-        handle = GoalHandle(goal_id=tuple(range(16)), accepted=True)
-        with pytest.raises(ActionInvokeException):
-            action.get_result(handle)
+        handle = GoalHandle(goal_id=bytes(range(16)), accepted=True)
+        with pytest.raises(ActionNotAvailableException):
+            action.get_result(handle, timeout=None)
 
     def test_get_result_requires_goal_handle(self):
         """get_result without a handle should fail fast (TypeError)."""
@@ -203,7 +206,7 @@ class TestAction:
 
         action = Action(session, "test/action", _mock_action, timeout=3000)
         action.feedback_callback = lambda msg: None
-        with pytest.raises(ActionInvokeException):
+        with pytest.raises(ActionTimeoutException):
             action.send_goal()
         assert action._active_goal_ids == set()
 
@@ -226,7 +229,7 @@ class TestAction:
         assert received == [mine]
 
         foreign = MagicMock()
-        foreign.goal_id = tuple(range(16))
+        foreign.goal_id = bytes(range(16))
         action._forward_feedback(foreign)
         assert received == [mine]
 
@@ -241,13 +244,33 @@ class TestAction:
         session.get.return_value = iter([reply])
 
         action = Action(session, "test/action", _mock_action, timeout=3000)
-        handle = GoalHandle(goal_id=tuple(range(16)), accepted=True)
+        handle = GoalHandle(goal_id=bytes(range(16)), accepted=True)
 
         response = action.cancel_goal(handle)
 
         assert response.return_code == CancelGoal_Response.ERROR_NONE
         sent = CancelGoal_Request.deserialize(session.get.call_args.kwargs["payload"])
         assert sent.goal_info.goal_id == bytes(range(16))
+
+    def test_cancel_goal_removes_active_id(self):
+        """A cancelled goal must not remain in the active feedback filter."""
+        from zros2 import CancelGoal_Response, GoalInfo
+
+        session = MagicMock()
+        session.is_closed.return_value = False
+        goal_id = bytes(range(16))
+        reply = MagicMock()
+        reply.ok.payload = CancelGoal_Response(
+            return_code=0,
+            goals_canceling=[GoalInfo(goal_id=goal_id)],
+        ).serialize()
+        session.get.return_value = iter([reply])
+
+        action = Action(session, "test/action", _mock_action, timeout=3000)
+        action._active_goal_ids.add(goal_id)
+        action.cancel_goal(GoalHandle(goal_id=goal_id, accepted=True))
+
+        assert goal_id not in action._active_goal_ids
 
     def test_cancel_all_goals_sends_zero_goal_id(self):
         """cancel_all_goals should use the all-zero wildcard goal ID."""
@@ -267,14 +290,14 @@ class TestAction:
         assert sent.goal_info.goal_id == b"\x00" * 16
 
     def test_cancel_goal_failure_raises(self):
-        """A failed cancel call should raise ActionInvokeException."""
+        """A failed cancel call should report action unavailability."""
         session = MagicMock()
         session.is_closed.return_value = False
         session.get.return_value = iter([])
 
         action = Action(session, "test/action", _mock_action, timeout=3000)
-        handle = GoalHandle(goal_id=tuple(range(16)), accepted=True)
-        with pytest.raises(ActionInvokeException):
+        handle = GoalHandle(goal_id=bytes(range(16)), accepted=True)
+        with pytest.raises(ActionNotAvailableException):
             action.cancel_goal(handle)
 
     def test_status_callback_subscribes_and_forwards(self):
@@ -300,17 +323,17 @@ class TestActionKeys:
     """Transport mapping for the five ROS 2 action channels."""
 
     def test_key_layout(self):
-        assert action_key("/fib", ActionChannel.SEND_GOAL) == "/fib/_action/send_goal"
-        assert action_key("/fib", ActionChannel.GET_RESULT) == "/fib/_action/get_result"
+        assert action_key("/fib", ActionChannel.SEND_GOAL) == "fib/_action/send_goal"
+        assert action_key("/fib", ActionChannel.GET_RESULT) == "fib/_action/get_result"
         assert (
-            action_key("/fib", ActionChannel.CANCEL_GOAL) == "/fib/_action/cancel_goal"
+            action_key("/fib", ActionChannel.CANCEL_GOAL) == "fib/_action/cancel_goal"
         )
-        assert action_key("/fib", ActionChannel.FEEDBACK) == "/fib/_action/feedback"
-        assert action_key("/fib", ActionChannel.STATUS) == "/fib/_action/status"
+        assert action_key("/fib", ActionChannel.FEEDBACK) == "fib/_action/feedback"
+        assert action_key("/fib", ActionChannel.STATUS) == "fib/_action/status"
 
     def test_action_uses_mapped_keys(self):
         session = MagicMock()
         session.is_closed.return_value = False
         action = Action(session, "/fib", _mock_action, timeout=3000)
-        assert action._feedback_subscriber._topic == "/fib/_action/feedback"
-        assert action._status_subscriber._topic == "/fib/_action/status"
+        assert action._feedback_subscriber._topic == "fib/_action/feedback"
+        assert action._status_subscriber._topic == "fib/_action/status"

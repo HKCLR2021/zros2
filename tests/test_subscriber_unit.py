@@ -151,7 +151,7 @@ class TestSubscriber:
         sub = Subscriber(session, "test/topic", cast(type[RosMessage], mock_msg_type))
         sub._subscriber = MagicMock()
 
-        async def async_callback(msg):  # noqa: unused
+        async def async_callback(_msg):
             pass
 
         cb = sub._make_zenoh_callback(

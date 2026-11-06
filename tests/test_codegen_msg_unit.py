@@ -14,6 +14,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from zros2.generator.codegen._file import GeneratedFile
 from zros2.generator.codegen._message import (
     generate_message_module,
@@ -166,8 +168,10 @@ class TestGenerateMessageStructure:
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
-        # Should have a keyword-only __init__
-        assert "def __init__(self, *, val: int32=0) -> None:" in code
+        # Keyword-only __init__; annotations/defaults are module-scope aliases
+        # so field names cannot shadow type constructors.
+        assert "def __init__(self, *, val: _ZROS2_Foo_IT0" in code
+        assert "_ZROS2_Foo_D0" in code
 
     def test_imports_present(self):
         defn = MsgDefinition(
@@ -218,7 +222,8 @@ class TestGenerateMessageStructure:
         # The __annotations__ override must include the field;
         # previously it was ``{}`` because the append-to-annotations
         # code was accidentally inside the wrong branch.
-        assert "'stamp': Time" in code
+        assert "'stamp': _ZROS2_Foo_T0" in code
+        assert "_ZROS2_Foo_T0: TypeAlias = Time" in code
 
     def test_header_comment(self):
         defn = MsgDefinition(
@@ -259,7 +264,7 @@ class TestGenerateMessageStructure:
         assert "__generated__ = True" in code
         assert "zros2-gen v" in code
         assert "__source__ = 'test/msg/Point.msg'" in code
-        assert "__ros_name__: str = 'test/msg/Point'" in code
+        assert "__ros_name__ = 'test/msg/Point'" in code
 
     def test_metadata_not_in_annotations(self):
         """Module-level metadata (__generated__, __generator__, __source__)
@@ -312,7 +317,8 @@ class TestGenerateMessageFields:
             fields=[MsgField(name="count", type_str="int32")],
         )
         code = generate_message_module(defn)
-        assert "count: int32 = 0" in code
+        assert "_ZROS2_Bar_D0 = 0" in code
+        assert "count = _ZROS2_Bar_D0" in code
 
     def test_string_field_default(self):
         defn = MsgDefinition(
@@ -322,7 +328,8 @@ class TestGenerateMessageFields:
             fields=[MsgField(name="name", type_str="string")],
         )
         code = generate_message_module(defn)
-        assert "name: str=''" in code
+        assert "_ZROS2_Bar_D0 = ''" in code
+        assert "name = _ZROS2_Bar_D0" in code
 
     def test_bool_field_default(self):
         defn = MsgDefinition(
@@ -332,7 +339,8 @@ class TestGenerateMessageFields:
             fields=[MsgField(name="flag", type_str="bool")],
         )
         code = generate_message_module(defn)
-        assert "flag: bool = False" in code
+        assert "_ZROS2_Bar_D0 = False" in code
+        assert "flag = _ZROS2_Bar_D0" in code
 
     def test_nested_field_with_factory(self):
         defn = MsgDefinition(
@@ -354,8 +362,8 @@ class TestGenerateMessageFields:
             ],
         )
         code = generate_message_module(defn)
-        assert "ClassVar" in code
-        assert "FOO: ClassVar[int32] = 42" in code
+        assert "FOO = 42" in code
+        assert "ClassVar" not in code
 
     def test_bool_constant(self):
         defn = MsgDefinition(
@@ -369,7 +377,7 @@ class TestGenerateMessageFields:
             ],
         )
         code = generate_message_module(defn)
-        assert "ENABLED: ClassVar[bool] = True" in code
+        assert "ENABLED = True" in code
 
     def test_bool_constant_lowercase_true(self):
         defn = MsgDefinition(
@@ -417,10 +425,8 @@ class TestGenerateMessageFields:
                 MsgField(name="NOW", type_str="time", default="0", is_constant=True)
             ],
         )
-        code = generate_message_module(defn)
-        # The time type adds an external import for builtin_interfaces
-        assert "builtin_interfaces" in code
-        assert "ClassVar" in code
+        with pytest.raises(ValueError, match="not supported"):
+            generate_message_module(defn)
 
     def test_float64_array_field(self):
         defn = MsgDefinition(
@@ -452,8 +458,8 @@ class TestGenerateMessageFields:
         code = generate_message_module(defn)
         assert "bounded_str[128]" in code
 
-    def test_field_default_is_type_based_not_field_based(self):
-        """The codegen currently uses _default_expr(type) rather than field.default."""
+    def test_field_default_is_honored(self):
+        """A default declared in the .msg file must become the constructor default."""
         defn = MsgDefinition(
             package="test",
             type_name="Bar",
@@ -461,8 +467,8 @@ class TestGenerateMessageFields:
             fields=[MsgField(name="x", type_str="int32", default="42")],
         )
         code = generate_message_module(defn)
-        # Known limitation: field.default is not used; default is from type.
-        assert "x: int32=0" in code
+        assert "_ZROS2_Bar_D0 = 42" in code
+        assert "x = _ZROS2_Bar_D0" in code
 
 
 # ======================================================================
@@ -596,7 +602,7 @@ class TestGenerateMessageEdgeCases:
             ],
         )
         code = generate_message_module(defn)
-        assert "ClassVar" in code
+        assert "VERSION = 1" in code
         compile(code, "<test>", "exec")
 
     def test_field_name_with_dash(self):
@@ -633,10 +639,10 @@ class TestGenerateMessageEdgeCases:
             fields=[MsgField(name="h", type_str="std_msgs/msg/Header")],
         )
         code = generate_message_module(defn)
-        # The __init__ signature uses the bare type with a factory default,
-        # not Optional, because the default is a concrete empty instance.
-        assert "Optional[Header]" not in code
-        assert "h: Header=Header()" in code or "h: Header = Header()" in code
+        # Nested fields use a None sentinel and a module-scope type alias.
+        assert "Optional" not in code
+        assert "h: _ZROS2_Foo_IT0=None" in code
+        assert "_ZROS2_Foo_IT0: TypeAlias = Header | None" in code
 
     def test_no_optional_for_primitives(self):
         """Primitives defaulting to None DO NOT get Optional."""
@@ -647,10 +653,8 @@ class TestGenerateMessageEdgeCases:
             fields=[MsgField(name="x", type_str="int32", default="0")],
         )
         code = generate_message_module(defn)
-        # Check the __init__ signature
-        assert "int32=0" in code  # ast.unparse omits spaces around =
-        # Optional should NOT appear for primitives
-        assert "typing import Optional" not in code
+        assert "x: _ZROS2_Foo_IT0=_ZROS2_Foo_D0" in code
+        assert "Optional" not in code
 
     def test_constant_time_external_import(self):
         """A ``time`` constant triggers an external import in generated code."""
@@ -662,10 +666,76 @@ class TestGenerateMessageEdgeCases:
                 MsgField(name="NOW", type_str="time", default="0", is_constant=True)
             ],
         )
-        code = generate_message_module(defn)
-        assert "builtin_interfaces" in code
-        assert code.count("builtin_interfaces") >= 1
+        with pytest.raises(ValueError, match="not supported"):
+            generate_message_module(defn)
 
+
+class TestGenerateMessageErrors:
+    def test_invalid_bool_constant_raises(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Bad",
+            type_kind="msg",
+            constants=[
+                MsgField(name="FLAG", type_str="bool", default="maybe", is_constant=True)
+            ],
+        )
+        with pytest.raises(ValueError, match="invalid bool"):
+            generate_message_module(defn)
+
+    def test_invalid_integer_constant_raises(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Bad",
+            type_kind="msg",
+            constants=[
+                MsgField(name="N", type_str="int32", default="nope", is_constant=True)
+            ],
+        )
+        with pytest.raises(ValueError, match="invalid integer"):
+            generate_message_module(defn)
+
+    def test_unknown_constant_bound_raises(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Bad",
+            type_kind="msg",
+            fields=[MsgField(name="data", type_str="uint8[MISSING]")],
+        )
+        with pytest.raises(ValueError, match="unknown constant"):
+            generate_message_module(defn)
+
+    def test_wstring_field_raises(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Bad",
+            type_kind="msg",
+            fields=[MsgField(name="text", type_str="wstring")],
+        )
+        with pytest.raises(ValueError, match="wstring is not supported"):
+            generate_message_module(defn)
+
+    def test_container_field_default_raises(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Bad",
+            type_kind="msg",
+            fields=[MsgField(name="values", type_str="int32[]", default="1")],
+        )
+        with pytest.raises(ValueError, match="only supported for scalar"):
+            generate_message_module(defn)
+
+    def test_float_nan_constant_is_valid(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Special",
+            type_kind="msg",
+            constants=[
+                MsgField(name="NAN", type_str="float64", default="nan", is_constant=True)
+            ],
+        )
+        code = generate_message_module(defn)
+        assert "float('nan')" in code
 
 # ═══════════════════════════════════════════════════════════════════════════
 # to_dict / from_dict runtime correctness
@@ -1114,26 +1184,37 @@ class TestCodegenRobustness:
 
     def test_is_container_type_true(self):
         """Array/sequence type strings return True."""
-        from zros2.generator.codegen._message import _is_container_type
+        from zros2.generator.parsing._types import parse_type
+        from zros2.generator.semantics._native_types import is_container
 
-        assert _is_container_type("int32[]") is True
-        assert _is_container_type("float64[3]") is True
-        assert _is_container_type("sequence<uint8>") is True
-        assert _is_container_type("sequence<Point,10>") is True
-        assert _is_container_type("int32[<=5]") is True
+        assert is_container(parse_type("int32[]")) is True
+        assert is_container(parse_type("float64[3]")) is True
+        assert is_container(parse_type("sequence<uint8>")) is True
+        assert is_container(parse_type("sequence<Point,10>")) is True
+        assert is_container(parse_type("int32[<=5]")) is True
 
     def test_is_container_type_false(self):
         """Scalar type strings return False."""
-        from zros2.generator.codegen._message import _is_container_type
+        from zros2.generator.parsing._types import parse_type
+        from zros2.generator.semantics._native_types import is_container
 
-        assert _is_container_type("int32") is False
-        assert _is_container_type("float64") is False
-        assert _is_container_type("string") is False
-        assert _is_container_type("string<=128") is False
+        assert is_container(parse_type("int32")) is False
+        assert is_container(parse_type("float64")) is False
+        assert is_container(parse_type("string")) is False
+        assert is_container(parse_type("string<=128")) is False
 
     def test_is_container_type_malformed(self):
         """Unparseable type strings return False without crashing."""
-        from zros2.generator.codegen._message import _is_container_type
+        from lark import LarkError
+
+        from zros2.generator.parsing._types import parse_type
+        from zros2.generator.semantics._native_types import is_container
+
+        def _is_container_type(type_str: str) -> bool:
+            try:
+                return is_container(parse_type(type_str))
+            except LarkError:
+                return False
 
         assert _is_container_type("") is False
         assert _is_container_type("int32[") is False

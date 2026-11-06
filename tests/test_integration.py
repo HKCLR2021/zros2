@@ -43,6 +43,10 @@ class TestServiceReadiness:
                 is True
             )
             assert client_zros_client.service_is_ready(name, self._SRV_TYPE) is True
+            assert (
+                client_zros_client.service_is_ready("/" + name, self._SRV_TYPE)
+                is True
+            )
         finally:
             token.undeclare()
 
@@ -142,6 +146,33 @@ class TestPubSub:
 
         assert len(received) == 1
         assert received[0].data == "hello world"
+
+    def test_leading_slash_topic_is_normalized(
+        self,
+        server_zros_client: ZRosClient,
+        client_zros_client: ZRosClient,
+    ) -> None:
+        """ROS-style ``/topic`` names must become valid Zenoh keys."""
+        received: list[StringMsg] = []
+        cv = threading.Condition()
+
+        def callback(msg: StringMsg) -> None:
+            with cv:
+                received.append(msg)
+                cv.notify_all()
+
+        topic = "/test/integration/leading_slash"
+
+        with (
+            server_zros_client.create_subscriber(topic, StringMsg) as sub,
+            client_zros_client.create_publisher(topic, StringMsg) as pub,
+        ):
+            sub.subscribe(callback)
+            time.sleep(0.3)
+            pub.publish(StringMsg(data="slash"))
+            assert _wait_for_condition(cv, lambda: len(received) > 0)
+
+        assert received[0].data == "slash"
 
     def test_publish_multiple_messages(
         self,
@@ -293,15 +324,15 @@ class TestService:
         self,
         client_zros_client: ZRosClient,
     ) -> None:
-        """Requesting a non-existent service raises an exception."""
-        from zros2.exceptions import ServiceNotAvailableException
+        """Requesting a non-existent service times out."""
+        from zros2.exceptions import ServiceTimeoutException
 
         client = client_zros_client.create_service_client(
             "test/integration/nonexistent",
             ExampleService,
         )
 
-        with pytest.raises(ServiceNotAvailableException):
+        with pytest.raises(ServiceTimeoutException):
             client.send_request(IntMsg(data=1), timeout=500)
 
 

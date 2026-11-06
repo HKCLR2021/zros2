@@ -10,15 +10,15 @@ Tests the service/action wrapper generation in isolation:
 import ast
 
 from zros2.generator.codegen._file import GeneratedFile
+from zros2.generator.codegen._merge import is_local_import
 from zros2.generator.codegen._service_action import (
     ACTION_SUFFIXES,
     SRV_SUFFIXES,
     generate_action_wrappers,
     generate_service_wrappers,
-    is_local_import,
-    merge_type_modules,
-    wrapper_class_ast,
 )
+from zros2.generator.codegen._service_merge import merge_type_modules
+from zros2.generator.codegen._wrapper import wrapper_class_ast
 from zros2.generator.parsing._models import MsgDefinition, MsgField
 
 # ======================================================================

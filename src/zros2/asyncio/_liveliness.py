@@ -13,9 +13,9 @@ from collections.abc import AsyncGenerator
 
 import zenoh
 
-from .._namespace import join_name
-from .._session import ZenohSessionProxy
-from ..discovery import Liveliness, LivelinessType, Qos
+from zros2._namespace import join_name
+from zros2._session import ZenohSessionProxy
+from zros2.discovery import Liveliness, LivelinessType, Qos
 
 _LIVELINESS_QUEUE_MAX = 100
 

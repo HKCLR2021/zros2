@@ -19,12 +19,10 @@ avoids ad-hoc formatting logic in this layer.
 
 import ast
 
-from ..semantics._utilities import (
-    generated_metadata_stmts,
-    header_comment,
-    to_snake_case,
-)
-from ._message import registry_import
+from zros2.generator.semantics._utilities import header_comment, to_snake_case
+
+from ._metadata import generated_metadata_stmts
+from ._registry import registry_import
 
 
 def generate_init_module(
@@ -134,7 +132,14 @@ def generate_init_module(
 
     # ── Module-level metadata (inserted after imports) ──────────────────
     meta = generated_metadata_stmts()
-    insert_pos = 0
+    insert_pos = (
+        1
+        if body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+        else 0
+    )
     for i, stmt in enumerate(body):
         if isinstance(stmt, (ast.ImportFrom, ast.Import)):
             insert_pos = i + 1
@@ -188,7 +193,14 @@ def generate_package_init(package: str, subdirs: list[str], distro: str = "") ->
 
     # ── Module-level metadata (inserted after imports) ──────────────────
     meta = generated_metadata_stmts()
-    insert_pos = 0
+    insert_pos = (
+        1
+        if body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+        else 0
+    )
     for i, stmt in enumerate(body):
         if isinstance(stmt, (ast.ImportFrom, ast.Import)):
             insert_pos = i + 1

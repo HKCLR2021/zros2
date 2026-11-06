@@ -6,7 +6,9 @@ from typing import Self
 
 import zenoh
 
-from .._session import ZenohSessionProxy
+from zros2._namespace import normalize_graph_name
+from zros2._session import ZenohSessionProxy
+
 from ._key import LivelinessKey, LivelinessType
 from ._qos import Qos
 
@@ -33,37 +35,47 @@ class Liveliness:
         ros2_type: str = "*",
         qos: Qos | str | None = None,
     ) -> None:
-        builder = _ENTITY_BUILDER.get(entity)
-        if builder is None:
-            supported = ", ".join(item.name for item in _ENTITY_BUILDER)
-            raise ValueError(
-                f"Unsupported entity type {entity!r}. Use one of: {supported}"
-            )
-
-        if qos is None:
-            qos = Qos.any()
-
-        self._ke: str
-        if entity in (LivelinessType.PUBLISHER, LivelinessType.SUBSCRIBER):
-            self._ke = builder("*", name, ros2_type, qos=qos)
+        if entity == LivelinessType.ALL:
+            self._ke = LivelinessKey.build_all_ke()
+        elif entity == LivelinessType.PLUGIN:
+            self._ke = LivelinessKey.build_plugin_ke()
         else:
-            self._ke = builder("*", name, ros2_type)
+            builder = _ENTITY_BUILDER.get(entity)
+            if builder is None:
+                supported = ", ".join(item.name for item in LivelinessType)
+                raise ValueError(
+                    f"Unsupported entity type {entity!r}. Use one of: {supported}"
+                )
+            if qos is None:
+                qos = Qos.any()
+            name = normalize_graph_name(name)
+            if entity in (LivelinessType.PUBLISHER, LivelinessType.SUBSCRIBER):
+                self._ke = builder("*", name, ros2_type, qos=qos)
+            else:
+                self._ke = builder("*", name, ros2_type)
         self._zenoh_session: ZenohSessionProxy = zenoh_session
         self._sub: zenoh.Subscriber[None] | None = None
 
-    def get(self) -> list[zenoh.Sample]:
-        """Return currently alive matching entities."""
+    def get(self, timeout_ms: int | None = None) -> list[zenoh.Sample]:
+        """Return currently alive matching entities.
+
+        Args:
+            timeout_ms: Query timeout in milliseconds.  ``None`` uses the
+                Zenoh default.  Pass ``0`` for a non-blocking snapshot.
+        """
         samples: list[zenoh.Sample] = []
-        for reply in self._zenoh_session.liveliness().get(self._ke):
+        for reply in self._zenoh_session.liveliness().get(
+            self._ke, timeout=timeout_ms
+        ):
             sample = reply.ok
             if sample is not None:
                 samples.append(sample)
                 continue
             err = reply.err
-            assert err is not None, "reply.err must be set when reply.ok is falsy"
-            logger.warning(
-                "Liveliness query returned an error: %s", err.payload.to_string()
-            )
+            if err is not None:
+                logger.warning(
+                    "Liveliness query returned an error: %s", err.payload.to_string()
+                )
         return samples
 
     def subscribe(
@@ -91,7 +103,7 @@ class Liveliness:
     def _close_subscriber(self) -> None:
         if self._sub is not None:
             try:
-                self._sub.undeclare()  # pyright: ignore[reportUnknownMemberType] — zenoh stub lacks a return annotation
+                self._sub.undeclare()
             except Exception:
                 logger.warning(
                     "Failed to undeclare liveliness subscriber", exc_info=True

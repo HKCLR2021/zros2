@@ -2,12 +2,11 @@
 
 Provides factory methods for creating ROS-like communication primitives:
 publishers, subscribers, service clients, and action clients.
-All factory methods require an explicit ``namespace`` argument.
-Pass ``namespace=""`` to use unnamespaced topics.
+All factory methods take an optional keyword-only ``namespace`` argument.
+Pass ``namespace=""`` (the default) to use unnamespaced topics.
 """
 
 import os
-import time
 import types
 
 import zenoh
@@ -16,14 +15,18 @@ from ._namespace import join_name
 from ._session import ZenohSessionProxy
 from .discovery._liveliness import Liveliness, LivelinessType
 from .discovery._qos import Qos
+from .discovery._readiness import (
+    service_is_ready as _service_is_ready,
+)
+from .discovery._readiness import (
+    wait_for_service as _wait_for_service,
+)
 from .endpoints._action import Action
 from .endpoints._publisher import Publisher
 from .endpoints._service import ServiceClient
 from .endpoints._subscriber import Subscriber
 from .types._base import RosMessage
 from .types._protocols import RosAction, RosService
-
-_SERVICE_POLL_INTERVAL = 0.1  # seconds between availability polls
 
 
 class ZRosClient:
@@ -33,30 +36,35 @@ class ZRosClient:
     :class:`zenoh.Config` object directly.
 
     Args:
-        config: Either a path (``str``) to a Zenoh configuration file
-            (JSON5) or a pre-built :class:`zenoh.Config` object.
+        config: Either a path (``str`` / ``os.PathLike``) to a Zenoh
+            configuration file (JSON5) or a pre-built :class:`zenoh.Config`
+            object.
 
     Raises:
-        FileNotFoundError: If ``config`` is a ``str`` but the file does
-            not exist.
-        TypeError: If ``config`` is neither a ``str`` nor a
+        FileNotFoundError: If ``config`` is a path but the file does not
+            exist.
+        TypeError: If ``config`` is not a path or a
             :class:`zenoh.Config`.
         zenoh.ZError: If Zenoh session cannot be opened.
     """
 
     def __init__(
         self,
-        config: str | zenoh.Config,
+        config: str | os.PathLike[str] | zenoh.Config,
     ):
-        if type(config) is str:
-            if not os.path.exists(config):
-                raise FileNotFoundError("Zenoh Config file not found")
-            zenoh_config = zenoh.Config.from_file(config)
-        elif type(config) is zenoh.Config:
+        if isinstance(config, zenoh.Config):
             zenoh_config = config
+        elif isinstance(config, (str, os.PathLike)):
+            path = os.fspath(config)
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"Zenoh config file not found: {path}"
+                )
+            zenoh_config = zenoh.Config.from_file(path)
         else:
             raise TypeError(
-                f"Expected str or zenoh.Config, got {type(config).__name__}"
+                "Expected str, os.PathLike, or zenoh.Config, "
+                f"got {type(config).__name__}"
             )
 
         self._zenoh_session: zenoh.Session = zenoh.open(zenoh_config)
@@ -147,7 +155,7 @@ class ZRosClient:
     def create_service_client[ReqT: RosMessage, ResT: RosMessage](
         self,
         service_name: str,
-        service_type: type[RosService[ReqT, ResT]],
+        service_type: RosService[ReqT, ResT],
         *,
         namespace: str = "",
     ) -> ServiceClient[ReqT, ResT]:
@@ -156,7 +164,7 @@ class ZRosClient:
         Args:
             service_name: Name of the service (without prefix).
             service_type: The service type *class* (e.g. ``QueryTrajectory``) —
-                must satisfy the ``RosService`` protocol via ``ClassVar``
+                must satisfy the ``RosService`` protocol via class-level
                 attributes (``.Request`` and ``.Response``).
             namespace: Device namespace.  Empty string means no namespace.
 
@@ -182,25 +190,14 @@ class ZRosClient:
         ``LivelinessType.SERVICE_SERVER`` — the match is exact on both
         name and type, so a server of a different type never counts as
         ready.  Pass the type string explicitly, e.g.
-        ``MyService.__ros_name__`` (``"my_pkg/srv/MyService"``).  Service
-        liveliness keys carry no QoS, so no ``qos`` parameter exists.
-
-        Args:
-            service_name: Name of the service (without prefix).
-            ros2_type: ROS 2 type string of the expected service
-                (e.g. ``"my_pkg/srv/MyService"``).
-            namespace: Device namespace.  Empty string means no namespace.
-
-        Returns:
-            True if a server with this exact name and type is alive.
+        ``MyService.__ros_name__`` (``"my_pkg/srv/MyService"``).
         """
-        liveliness = self.create_liveliness(
-            LivelinessType.SERVICE_SERVER,
-            name=service_name,
-            ros2_type=ros2_type,
+        return _service_is_ready(
+            self._session_proxy,
+            service_name,
+            ros2_type,
             namespace=namespace,
         )
-        return bool(liveliness.get())
 
     def wait_for_service(
         self,
@@ -214,35 +211,14 @@ class ZRosClient:
 
         The match is exact on both name and type (no wildcards).  Pass
         the type string explicitly, e.g. ``MyService.__ros_name__``.
-
-        Args:
-            service_name: Name of the service (without prefix).
-            ros2_type: ROS 2 type string of the expected service
-                (e.g. ``"my_pkg/srv/MyService"``).
-            timeout_ms: Timeout in **milliseconds**.  ``None`` waits
-                indefinitely (default).
-            namespace: Device namespace.  Empty string means no namespace.
-
-        Returns:
-            True if a matching server appeared within the timeout, False
-            otherwise.
         """
-        liveliness = self.create_liveliness(
-            LivelinessType.SERVICE_SERVER,
-            name=service_name,
-            ros2_type=ros2_type,
+        return _wait_for_service(
+            self._session_proxy,
+            service_name,
+            ros2_type,
+            timeout_ms,
             namespace=namespace,
         )
-        if timeout_ms is None:
-            while not liveliness.get():
-                time.sleep(_SERVICE_POLL_INTERVAL)
-            return True
-        deadline = time.monotonic() + timeout_ms / 1000.0
-        while time.monotonic() < deadline:
-            if liveliness.get():
-                return True
-            time.sleep(_SERVICE_POLL_INTERVAL)
-        return bool(liveliness.get())
 
     # ── Action Client ────────────────────────────────────────────────
 
@@ -258,17 +234,15 @@ class ZRosClient:
     ](
         self,
         action_name: str,
-        action_type: type[
-            RosAction[
-                SGReqT,
-                SGResT,
-                GRReqT,
-                GRResT,
-                FBMsgT,
-                GoalT,
-                ResultT,
-                FeedbackT,
-            ]
+        action_type: RosAction[
+            SGReqT,
+            SGResT,
+            GRReqT,
+            GRResT,
+            FBMsgT,
+            GoalT,
+            ResultT,
+            FeedbackT,
         ],
         timeout: int | None = None,
         *,
@@ -279,8 +253,7 @@ class ZRosClient:
         Args:
             action_name: Name of the action (without prefix).
             action_type: The action type *class* (e.g. ``Fibonacci``) —
-                must satisfy the ``RosAction`` protocol via ``ClassVar``
-                attributes.
+                must satisfy the class-object ``RosAction`` protocol.
             timeout: Optional timeout in **milliseconds** (default: 3000).
             namespace: Device namespace.  Empty string means no namespace.
 

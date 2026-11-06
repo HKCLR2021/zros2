@@ -11,9 +11,9 @@ mirroring the sync factory surface via
 import asyncio
 from typing import Self
 
-from .._session import ZenohSessionProxy
-from ..endpoints._publisher import Publisher
-from ..types._base import RosMessage
+from zros2._session import ZenohSessionProxy
+from zros2.endpoints._publisher import Publisher
+from zros2.types._base import RosMessage
 
 
 class AsyncPublisher[MsgT: RosMessage]:

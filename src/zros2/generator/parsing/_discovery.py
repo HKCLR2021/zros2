@@ -10,14 +10,9 @@ from collections.abc import Iterator
 
 from lark import LarkError
 
-from ..assets import BUILTIN_MSG_DIR
-from ..semantics._action import expand_action
+from zros2.generator.assets import BUILTIN_MSG_DIR
+
 from ._models import MsgDefinition
-from ._parser import (
-    parse_action_file,
-    parse_msg_file,
-    parse_srv_file,
-)
 from ._types import ROS2_PRIMITIVE_TYPES, parse_type
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -179,44 +174,10 @@ def validate_dependencies(types: dict[str, MsgDefinition]) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def collect_all_types(
-    msg_dirs: list[pathlib.Path],
-) -> dict[str, MsgDefinition]:
-    """Scan directories for all .msg, .srv, .action files and parse them."""
-    types: dict[str, MsgDefinition] = {}
-
-    for pkg_dir in msg_dirs:
-        package = pkg_dir.name
-
-        # -- Messages --
-        msg_dir = pkg_dir / "msg"
-        for _, file_path in iter_msg_files(msg_dir):
-            defn = parse_msg_file(file_path, package)
-            types[defn.full_name] = defn
-
-        # -- Services --
-        srv_dir = pkg_dir / "srv"
-        for _, file_path in iter_srv_files(srv_dir):
-            request, response = parse_srv_file(file_path, package)
-            types[request.full_name] = request
-            types[response.full_name] = response
-
-        # -- Actions --
-        # Parser yields the three user sections; expansion adds the five
-        # transport types so dependency validation sees the full set.
-        action_dir = pkg_dir / "action"
-        for _, file_path in iter_action_files(action_dir):
-            for defn in expand_action(parse_action_file(file_path, package)):
-                types[defn.full_name] = defn
-
-    return types
-
-
 __all__ = [
     "DISTRO_MAP",
     "VALID_DISTROS",
     "builtin_msg_dirs",
-    "collect_all_types",
     "find_msg_dirs",
     "iter_action_files",
     "iter_msg_files",

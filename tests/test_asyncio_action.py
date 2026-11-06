@@ -50,14 +50,16 @@ def _make_fake_action(
     fake_action = MagicMock()
     fake_action.__enter__.return_value = fake_action
     fake_action.send_goal.return_value = GoalHandle(
-        goal_id=tuple(range(16)), accepted=accepted
+        goal_id=bytes(range(16)), accepted=accepted
     )
     if result_gate is None:
         fake_action.get_result.return_value = _ResultResponse(4, result)
     else:
 
         def _wait_for_gate(
-            handle: GoalHandle, timeout: int | None = None
+            handle: GoalHandle,
+            timeout: int | None = None,
+            cancellation_token: object | None = None,
         ) -> _ResultResponse:
             result_gate.wait()
             return _ResultResponse(4, result)
@@ -179,9 +181,10 @@ class TestAsyncRobotClientAction:
         )
         fake_action = action_cls.return_value
         fake_action.send_goal.assert_called_once_with(goal)
-        fake_action.get_result.assert_called_once_with(
-            fake_action.send_goal.return_value, 5000
-        )
+        result_args = fake_action.get_result.call_args.args
+        assert result_args[0] == fake_action.send_goal.return_value
+        assert result_args[1] == 5000
+        assert result_args[2] is not None
 
     @pytest.mark.asyncio
     async def test_none_timeout_defaults_to_3000(self):
@@ -199,9 +202,10 @@ class TestAsyncRobotClientAction:
             fake_proxy, "test/action", _mock_action(), 3000
         )
         fake_action = action_cls.return_value
-        fake_action.get_result.assert_called_once_with(
-            fake_action.send_goal.return_value, None
-        )
+        result_args = fake_action.get_result.call_args.args
+        assert result_args[0] == fake_action.send_goal.return_value
+        assert result_args[1] is None
+        assert result_args[2] is not None
 
     @pytest.mark.asyncio
     async def test_early_exit_is_clean(self):

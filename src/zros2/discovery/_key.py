@@ -3,6 +3,8 @@
 import enum
 from typing import ClassVar
 
+from zros2._namespace import normalize_graph_name
+
 from ._qos import Qos
 
 
@@ -112,8 +114,8 @@ class LivelinessKey:
         keyless: bool,
         qos: Qos | str | None,
     ) -> str:
-        encoded_name = cls._escape_slashes(name)
-        encoded_type = cls._escape_slashes(ros2_type)
+        encoded_name = cls._escape_slashes(normalize_graph_name(name))
+        encoded_type = cls._escape_slashes(normalize_graph_name(ros2_type))
         qos_key = qos if isinstance(qos, str) else (qos or Qos()).to_key_expr(keyless)
         return template.format(zenoh_id, encoded_name, encoded_type, qos_key)
 
@@ -163,8 +165,8 @@ class LivelinessKey:
     ) -> str:
         return template.format(
             zenoh_id,
-            cls._escape_slashes(name),
-            cls._escape_slashes(ros2_type),
+            cls._escape_slashes(normalize_graph_name(name)),
+            cls._escape_slashes(normalize_graph_name(ros2_type)),
         )
 
     @classmethod

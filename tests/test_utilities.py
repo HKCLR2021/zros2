@@ -2,9 +2,9 @@
 
 import ast
 
+from zros2.generator.codegen._metadata import generated_metadata_stmts
 from zros2.generator.semantics._utilities import (
     default_expr,
-    generated_metadata_stmts,
     header_comment,
     to_snake_case,
 )

@@ -1,6 +1,6 @@
 """End-to-end tests for zros2.generator."""
 
-import importlib.util
+import importlib
 import pathlib
 import sys
 
@@ -21,9 +21,9 @@ from zros2.generator.codegen._stubs import generate_stub_module
 from zros2.generator.parsing._discovery import (
     _strip_wrappers,
     builtin_msg_dirs,
-    collect_all_types,
     validate_dependencies,
 )
+from zros2.generator.pipeline._collect import collect_all_types
 from zros2.generator.pipeline._writer import write_generated_files
 from zros2.generator.semantics._utilities import (
     default_expr,
@@ -197,7 +197,7 @@ class TestGenerateMessageModule:
         assert "@classmethod" in code
         assert "def from_dict" in code
         assert "def __init__" in code
-        assert "__ros_name__: str = 'test/msg/Point'" in code
+        assert "__ros_name__ = 'test/msg/Point'" in code
 
     def test_generated_code_is_valid_syntax(self):
         defn = MsgDefinition(
@@ -221,7 +221,7 @@ class TestGenerateMessageModule:
             fields=[MsgField(name="val", type_str="int32")],
         )
         code = generate_message_module(defn)
-        assert "__ros_name__: str = 'my_pkg/msg/MyType'" in code
+        assert "__ros_name__ = 'my_pkg/msg/MyType'" in code
 
         defn_srv = MsgDefinition(
             package="my_pkg",
@@ -230,7 +230,7 @@ class TestGenerateMessageModule:
             fields=[MsgField(name="val", type_str="int32")],
         )
         code_srv = generate_message_module(defn_srv)
-        assert "__ros_name__: str = 'my_pkg/srv/Foo_Request'" in code_srv
+        assert "__ros_name__ = 'my_pkg/srv/Foo_Request'" in code_srv
 
 
 class TestGenerateStubModule:
@@ -590,7 +590,7 @@ class TestServiceWrapperGeneration:
         import sys
         import tempfile
 
-        from zros2.generator.parsing._discovery import collect_all_types
+        from zros2.generator.pipeline._collect import collect_all_types
         from zros2.generator.pipeline._generate import generate_all
         from zros2.generator.pipeline._writer import write_generated_files
 
@@ -676,10 +676,8 @@ class TestActionWrapperGeneration:
         import sys
         import tempfile
 
-        from zros2.generator.parsing._discovery import (
-            builtin_msg_dirs,
-            collect_all_types,
-        )
+        from zros2.generator.parsing._discovery import builtin_msg_dirs
+        from zros2.generator.pipeline._collect import collect_all_types
         from zros2.generator.pipeline._generate import generate_all
         from zros2.generator.pipeline._writer import write_generated_files
 
@@ -886,7 +884,7 @@ class TestGeneratorEdgeCases:
 
     def test_collect_all_types_with_all_kinds(self, tmp_path):
         """collect_all_types handles msg, srv, and action dirs."""
-        from zros2.generator.parsing._discovery import collect_all_types
+        from zros2.generator.pipeline._collect import collect_all_types
 
         # Create a proper package directory so the name is predictable
         pkg_dir = tmp_path / "my_pkg"

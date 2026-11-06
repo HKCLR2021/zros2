@@ -8,7 +8,7 @@ Usage::
         data = msg.serialize()
 """
 
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from ._base import RosMessage
 
@@ -24,11 +24,11 @@ class RosService[ReqT: RosMessage, ResT: RosMessage](Protocol):
         def call(svc: RosService[RosMessage, RosMessage]) -> None: ...
     """
 
-    # Checkers forbid ClassVar referencing the class's own type parameters;
-    # ClassVar is required so ClassVar implementations match and class-level
-    # access (type[RosService[...]].Request) stays unambiguous.
-    Request: ClassVar[type[ReqT]]  # pyright: ignore[reportGeneralTypeIssues]
-    Response: ClassVar[type[ResT]]  # pyright: ignore[reportGeneralTypeIssues]
+    # These protocols describe the generated *class object*, not an instance.
+    # A plain attribute is required: ClassVar[...] cannot reference the
+    # protocol's own type parameters.
+    Request: type[ReqT]
+    Response: type[ResT]
 
 
 @runtime_checkable
@@ -54,14 +54,14 @@ class RosAction[
                                      RosMessage, RosMessage]) -> None: ...
     """
 
-    Goal: ClassVar[type[GoalT]]  # pyright: ignore[reportGeneralTypeIssues]
-    Result: ClassVar[type[ResultT]]  # pyright: ignore[reportGeneralTypeIssues]
-    Feedback: ClassVar[type[FeedbackT]]  # pyright: ignore[reportGeneralTypeIssues]
-    FeedbackMessage: ClassVar[type[FBMsgT]]  # pyright: ignore[reportGeneralTypeIssues]
-    SendGoal_Request: ClassVar[type[SGReqT]]  # pyright: ignore[reportGeneralTypeIssues]
-    SendGoal_Response: ClassVar[type[SGResT]]  # pyright: ignore[reportGeneralTypeIssues]
-    GetResult_Request: ClassVar[type[GRReqT]]  # pyright: ignore[reportGeneralTypeIssues]
-    GetResult_Response: ClassVar[type[GRResT]]  # pyright: ignore[reportGeneralTypeIssues]
+    Goal: type[GoalT]
+    Result: type[ResultT]
+    Feedback: type[FeedbackT]
+    FeedbackMessage: type[FBMsgT]
+    SendGoal_Request: type[SGReqT]
+    SendGoal_Response: type[SGResT]
+    GetResult_Request: type[GRReqT]
+    GetResult_Response: type[GRResT]
 
 
 @runtime_checkable
@@ -85,14 +85,14 @@ class RosActionView[
         async def observe_action[
             GoalT: RosMessage, ResultT: RosMessage, FeedbackT: RosMessage,
         ](
-            action_type: type[RosActionView[GoalT, ResultT, FeedbackT]],
+            action_type: RosActionView[GoalT, ResultT, FeedbackT],
             goal: GoalT | None = None,
         ) -> None: ...
     """
 
-    Goal: ClassVar[type[GoalT]]  # pyright: ignore[reportGeneralTypeIssues]
-    Result: ClassVar[type[ResultT]]  # pyright: ignore[reportGeneralTypeIssues]
-    Feedback: ClassVar[type[FeedbackT]]  # pyright: ignore[reportGeneralTypeIssues]
+    Goal: type[GoalT]
+    Result: type[ResultT]
+    Feedback: type[FeedbackT]
 
 
 class SendGoalRequest[GoalT: RosMessage](RosMessage, Protocol):
@@ -102,7 +102,7 @@ class SendGoalRequest[GoalT: RosMessage](RosMessage, Protocol):
     and a ``goal`` payload.
     """
 
-    goal_id: tuple[int, ...]
+    goal_id: bytes
     goal: GoalT
 
 
@@ -112,7 +112,7 @@ class GetResultRequest(RosMessage, Protocol):
     Every ROS 2 action ``GetResult`` request has a ``goal_id`` (UUID).
     """
 
-    goal_id: tuple[int, ...]
+    goal_id: bytes
 
 
 __all__ = [

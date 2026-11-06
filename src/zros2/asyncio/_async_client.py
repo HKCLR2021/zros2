@@ -12,12 +12,13 @@ from collections.abc import AsyncGenerator
 
 import zenoh
 
-from .._client import ZRosClient
-from .._namespace import join_name
-from .._session import ZenohSessionProxy
-from ..discovery import LivelinessType, Qos
-from ..types._base import RosMessage
-from ..types._protocols import RosAction, RosService
+from zros2._client import ZRosClient
+from zros2._namespace import join_name
+from zros2._session import ZenohSessionProxy
+from zros2.discovery import LivelinessType, Qos
+from zros2.types._base import RosMessage
+from zros2.types._protocols import RosAction, RosService
+
 from ._action import ActionFeedback, ActionResult, _invoke_action
 from ._liveliness import _query_liveliness, _watch_liveliness
 from ._publisher import AsyncPublisher
@@ -88,7 +89,7 @@ class AsyncRobotClient:
     async def invoke_service[ReqT: RosMessage, ResT: RosMessage](
         self,
         service_name: str,
-        srv_type: type[RosService[ReqT, ResT]],
+        srv_type: RosService[ReqT, ResT],
         body: ReqT | None = None,
         timeout: int | None = None,
         *,
@@ -133,17 +134,15 @@ class AsyncRobotClient:
     ](
         self,
         action_name: str,
-        action_type: type[
-            RosAction[
-                SGReqT,
-                SGResT,
-                GRReqT,
-                GRResT,
-                FBMsgT,
-                GoalT,
-                ResultT,
-                FeedbackT,
-            ]
+        action_type: RosAction[
+            SGReqT,
+            SGResT,
+            GRReqT,
+            GRResT,
+            FBMsgT,
+            GoalT,
+            ResultT,
+            FeedbackT,
         ],
         goal: GoalT | None = None,
         timeout: int | None = None,

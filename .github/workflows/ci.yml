@@ -14,22 +14,23 @@ on:
       - "docs/**"
       - "**/*.md"
 
-env:
-  PYTHON_VERSION: "3.14"
-
 jobs:
   unit-tests:
-    name: Unit Tests
+    name: Unit Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: pyproject.toml
 
@@ -37,7 +38,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install pytest-cov
 
       - name: Run unit tests with coverage
         run: |
@@ -45,12 +45,52 @@ jobs:
             --cov=zros2 \
             --cov-report=term-missing \
             --cov-report=xml \
+            --cov-fail-under=95 \
             -v
 
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-report
+          name: coverage-${{ matrix.python-version }}
           path: coverage.xml
           retention-days: 7
+
+  type-check:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run ruff
+        run: ruff check src tests benchmarks
+
+      - name: Run pyright
+        run: pyright
+
+  package:
+    name: Build & Install Wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: |
+          python -m pip install --upgrade pip
+          pip install build
+          python -m build
+      - name: Verify wheel imports and bundles assets
+        run: |
+          python -m pip install dist/*.whl
+          python -m pip check
+          python -c "import zros2; from zros2.generator.assets import BUILTIN_MSG_DIR; assert (BUILTIN_MSG_DIR / 'humble' / 'std_msgs' / 'msg' / 'String.msg').is_file(); print('zros2', zros2.__version__)"

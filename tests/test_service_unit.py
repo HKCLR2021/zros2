@@ -7,7 +7,11 @@ import pytest
 import zenoh
 
 from zros2.endpoints import ServiceClient
-from zros2.exceptions import ServiceInvokeException, ServiceNotAvailableException
+from zros2.exceptions import (
+    ServiceInvokeException,
+    ServiceNotAvailableException,
+    ServiceTimeoutException,
+)
 from zros2.types import RosService
 
 from ._test_msgs import IntMsg, PairMsg
@@ -40,10 +44,10 @@ class TestServiceClient:
         """Sending a request with None payload should not serialize."""
         session = MagicMock()
         session.is_closed.return_value = False
-        # Mock the get call to return an empty iterator (service unavailable)
+        # Mock the get call to return an empty iterator (timeout)
         session.get.return_value = iter([])
         client = ServiceClient(session, "test/srv", _example_srv)
-        with pytest.raises(ServiceNotAvailableException):
+        with pytest.raises(ServiceTimeoutException):
             client.send_request(None, timeout=100)
         # payload should be None (not serialized)
         session.get.assert_called_once()
@@ -63,6 +67,19 @@ class TestServiceClient:
         with pytest.raises(ServiceInvokeException, match="test error"):
             client.send_request(IntMsg(data=1), timeout=100)
 
+    def test_send_request_error_reply_without_details(self):
+        """An error reply without an err payload should still raise cleanly."""
+        session = MagicMock()
+        session.is_closed.return_value = False
+        err_reply = MagicMock()
+        err_reply.ok = None
+        err_reply.err = None
+        session.get.return_value = iter([err_reply])
+
+        client = ServiceClient(session, "test/srv", _example_srv)
+        with pytest.raises(ServiceInvokeException, match="without error details"):
+            client.send_request(IntMsg(data=1), timeout=100)
+
     def test_send_request_handles_zenoh_error(self):
         """A zenoh.ZError from get() should raise ServiceInvokeException."""
         session = MagicMock()
@@ -74,14 +91,24 @@ class TestServiceClient:
             client.send_request(IntMsg(data=1), timeout=100)
 
     def test_send_request_handles_empty_replies(self):
-        """No replies should raise ServiceNotAvailableException."""
+        """No replies within a timeout should raise ServiceTimeoutException."""
+        session = MagicMock()
+        session.is_closed.return_value = False
+        session.get.return_value = iter([])
+
+        client = ServiceClient(session, "test/srv", _example_srv)
+        with pytest.raises(ServiceTimeoutException):
+            client.send_request(IntMsg(data=1), timeout=100)
+
+    def test_send_request_no_reply_without_timeout_is_unavailable(self):
+        """No reply with timeout=None means the service is unavailable."""
         session = MagicMock()
         session.is_closed.return_value = False
         session.get.return_value = iter([])
 
         client = ServiceClient(session, "test/srv", _example_srv)
         with pytest.raises(ServiceNotAvailableException):
-            client.send_request(IntMsg(data=1), timeout=100)
+            client.send_request(IntMsg(data=1), timeout=None)
 
     def test_send_request_success(self):
         """A successful reply should be deserialized and returned."""

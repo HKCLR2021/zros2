@@ -8,9 +8,11 @@ __all__ = [
     "ActionException",
     "ActionInvokeException",
     "ActionNotAvailableException",
+    "ActionTimeoutException",
     "ServiceException",
     "ServiceInvokeException",
     "ServiceNotAvailableException",
+    "ServiceTimeoutException",
     "ZRos2Exception",
 ]
 
@@ -31,6 +33,10 @@ class ServiceInvokeException(ServiceException):
     """Exception raised when a ROS service invocation fails."""
 
 
+class ServiceTimeoutException(ServiceException):
+    """Exception raised when a service request receives no reply before timeout."""
+
+
 class ActionException(ZRos2Exception):
     """Base exception for ROS action errors."""
 
@@ -41,3 +47,7 @@ class ActionNotAvailableException(ActionException):
 
 class ActionInvokeException(ActionException):
     """Exception raised when a ROS action invocation fails."""
+
+
+class ActionTimeoutException(ActionException):
+    """Exception raised when an action request receives no reply before timeout."""

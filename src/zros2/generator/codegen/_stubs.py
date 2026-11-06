@@ -34,101 +34,20 @@ Why ``kw_defaults`` must match ``kwonlyargs`` length
 
 import ast
 
-from lark import LarkError
-
-from ..parsing._models import MsgDefinition
-from ..parsing._types import TypeInfo, parse_type
-from ..semantics._resolve_types import resolve_type
-from ..semantics._utilities import (
-    default_expr,
-    generated_metadata_stmts,
-    header_comment,
+from zros2.generator.parsing._models import MsgDefinition
+from zros2.generator.parsing._types import parse_type
+from zros2.generator.semantics._literal_values import default_scalar, parse_literal
+from zros2.generator.semantics._native_types import (
+    CONTAINER_KINDS,
+    native_stub_type,
+    stub_annotation,
 )
+from zros2.generator.semantics._resolve_types import resolve_type
+from zros2.generator.semantics._type_context import constant_int_map
+from zros2.generator.semantics._utilities import header_comment
 
-_PY_SCALARS: dict[str, str] = {
-    "bool": "bool",
-    "byte": "int",
-    "char": "int",
-    "int8": "int",
-    "int16": "int",
-    "int32": "int",
-    "int64": "int",
-    "uint8": "int",
-    "uint16": "int",
-    "uint32": "int",
-    "uint64": "int",
-    "float32": "float",
-    "float64": "float",
-    "str": "str",
-    "string": "str",
-    "wstring": "str",
-}
-
-
-def _inner_ros_type(info: TypeInfo) -> str:
-    """Rebuild the ROS type string for a TypeInfo's wrapped inner type."""
-    if info.is_bounded_string and info.string_max is not None:
-        return f"{info.base_name}<={info.string_max}"
-    return info.base_name or ""
-
-
-def _native_stub_type(
-    type_str: str,
-    current_package: str = "",
-    root_package: str = "",
-) -> tuple[str, bool]:
-    """Map a ROS 2 type string to a Python stub annotation.
-
-    Returns:
-        ``(annotation, needs_sequence)`` where *needs_sequence* is True
-        when ``collections.abc.Sequence`` must be imported.
-    """
-    stripped = type_str.strip()
-    if not stripped:
-        return "object", False
-    try:
-        info = parse_type(stripped)
-    except LarkError:
-        return _PY_SCALARS.get(stripped, stripped), False
-
-    if info.kind in (
-        "unbounded",
-        "unbounded_sequence",
-        "bounded",
-        "bounded_sequence",
-    ):
-        inner, _ = _native_stub_type(
-            _inner_ros_type(info), current_package, root_package
-        )
-        return f"Sequence[{inner}]", True
-    if info.kind == "fixed":
-        inner, _ = _native_stub_type(
-            _inner_ros_type(info), current_package, root_package
-        )
-        return f"tuple[{inner}, ...]", False
-    if info.is_bounded_string:
-        return "str", False
-    if info.base_name in _PY_SCALARS:
-        return _PY_SCALARS[info.base_name], False
-    resolved = resolve_type(
-        stripped, current_package=current_package, root_package=root_package
-    )
-    return resolved.annotation_expr, False
-
-
-def _stub_annotation(
-    type_str: str,
-    current_package: str = "",
-    root_package: str = "",
-) -> str:
-    """Translate a ROS 2 type string into a native Python type hint.
-
-    The mapping is lossy when ROS and Python don't align (integer widths
-    collapse to ``int``, bounded strings become ``str``).  The runtime
-    module still enforces CDR constraints; the stub only describes shape.
-    """
-    native, _ = _native_stub_type(type_str, current_package, root_package)
-    return native
+from ._literal_ast import literal_ast
+from ._metadata import generated_metadata_stmts
 
 
 def generate_stub_module(
@@ -177,7 +96,13 @@ def generate_stub_module(
             current_package=defn.package,
             root_package=root_package,
         )
-        native = _stub_annotation(const.type_str, defn.package, root_package)
+        native = stub_annotation(const.type_str, defn.package, root_package)
+        info = parse_type(const.type_str)
+        if const.default is None:
+            raise ValueError(f"{defn.full_name}.{const.name}: missing constant value")
+        value = parse_literal(
+            const.default, info, f"{defn.full_name}.{const.name}"
+        )
         ext_imports.append("from typing import ClassVar")
         body.append(
             ast.AnnAssign(
@@ -186,9 +111,7 @@ def generate_stub_module(
                     value=ast.Name(id="ClassVar"),
                     slice=ast.parse(native, mode="eval").body,
                 ),
-                value=ast.parse(const.default, mode="eval").body
-                if const.default
-                else None,
+                value=literal_ast(value),
                 simple=1,
             )
         )
@@ -201,8 +124,9 @@ def generate_stub_module(
             field.type_str,
             current_package=defn.package,
             root_package=root_package,
+            constants=constant_int_map(defn),
         )
-        native, uses_sequence = _native_stub_type(
+        native, uses_sequence = native_stub_type(
             field.type_str, defn.package, root_package
         )
         if uses_sequence:
@@ -232,7 +156,7 @@ def generate_stub_module(
     ann_keys: list[ast.expr | None] = [ast.Constant(value=f.name) for f in defn.fields]
     ann_values = [
         ast.parse(
-            _stub_annotation(f.type_str, defn.package, root_package), mode="eval"
+            stub_annotation(f.type_str, defn.package, root_package), mode="eval"
         ).body
         for f in defn.fields
     ]
@@ -347,37 +271,43 @@ def generate_stub_module(
 
     # -- __init__ signature (last — must come after all methods) -------------
     init_params: list[ast.arg] = []
+    kw_defaults: list[ast.expr | None] = []
     for field in defn.fields:
         resolved = resolve_type(
             field.type_str,
             current_package=defn.package,
             root_package=root_package,
+            constants=constant_int_map(defn),
         )
-        native = _stub_annotation(field.type_str, defn.package, root_package)
+        info = parse_type(field.type_str)
+        native = stub_annotation(field.type_str, defn.package, root_package)
+        is_container = info.kind in CONTAINER_KINDS
+        is_nested = bool(resolved.external_import)
+        if is_container or is_nested:
+            if field.default is not None:
+                raise ValueError(
+                    f"{defn.full_name}.{field.name}: default values are only "
+                    "supported for scalar fields"
+                )
+            annotation = f"{native} | None"
+            default: ast.expr = ast.Constant(value=None)
+        else:
+            annotation = native
+            if field.default is not None:
+                value = parse_literal(
+                    field.default, info, f"{defn.full_name}.{field.name}"
+                )
+                default = literal_ast(value)
+            else:
+                default = literal_ast(default_scalar(info))
         init_params.append(
             ast.arg(
                 arg=field.name,
-                annotation=ast.parse(native, mode="eval").body,
+                annotation=ast.parse(annotation, mode="eval").body,
             )
         )
+        kw_defaults.append(default)
     if init_params:
-        # Use type-appropriate defaults (same logic as the runtime .py)
-        # instead of ``None``, so type checkers see correct types.
-        kw_defaults: list[ast.expr | None] = []
-        for field in defn.fields:
-            resolved = resolve_type(
-                field.type_str,
-                current_package=defn.package,
-                root_package=root_package,
-            )
-            default_str = default_expr(field.type_str)
-            if resolved.external_import and default_str == "None":
-                default_str = f"{resolved.annotation_expr}()"
-            kw_defaults.append(
-                ast.parse(default_str, mode="eval").body
-                if default_str
-                else ast.Constant(value=None)
-            )
 
         body.append(
             ast.FunctionDef(

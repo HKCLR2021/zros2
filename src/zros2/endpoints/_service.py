@@ -4,10 +4,15 @@ import itertools
 
 import zenoh
 
-from .._session import ZenohSessionProxy
-from ..exceptions import ServiceInvokeException, ServiceNotAvailableException
-from ..types._base import RosMessage
-from ..types._protocols import RosService
+from zros2._namespace import normalize_graph_name
+from zros2._session import ZenohSessionProxy
+from zros2.exceptions import (
+    ServiceInvokeException,
+    ServiceNotAvailableException,
+    ServiceTimeoutException,
+)
+from zros2.types._base import RosMessage
+from zros2.types._protocols import RosService
 
 
 class ServiceClient[ReqT: RosMessage, ResT: RosMessage]:
@@ -23,19 +28,26 @@ class ServiceClient[ReqT: RosMessage, ResT: RosMessage]:
         self,
         zenoh_client: ZenohSessionProxy,
         service_name: str,
-        service_type: type[RosService[ReqT, ResT]],
+        service_type: RosService[ReqT, ResT],
     ):
         self._zenoh_session = zenoh_client
-        self._service_name = service_name
+        self._service_name = normalize_graph_name(service_name)
         self._srv_types = service_type
 
-    def send_request(self, payload: ReqT | None, timeout: int | None = 1000) -> ResT:
+    def send_request(
+        self,
+        payload: ReqT | None,
+        timeout: int | None = 1000,
+        cancellation_token: zenoh.CancellationToken | None = None,
+    ) -> ResT:
         """Send a service request via Zenoh.
 
         Args:
             payload: The request message instance, or ``None`` for an empty request.
             timeout: Request timeout in **milliseconds**.  ``None`` waits
                 indefinitely (default: 1000).
+            cancellation_token: Optional Zenoh cancellation token, used by
+                the asyncio facade to stop a worker thread on cancellation.
 
         Returns:
             Deserialized response message.
@@ -43,7 +55,9 @@ class ServiceClient[ReqT: RosMessage, ResT: RosMessage]:
         Raises:
             RuntimeError: If Zenoh session is closed.
             ServiceInvokeException: If the service returns an error.
-            ServiceNotAvailableException: If no response is received.
+            ServiceNotAvailableException: If no service is available.
+            ServiceTimeoutException: If a service exists but does not reply
+                within *timeout*.
         """
         if self._zenoh_session.is_closed():
             raise RuntimeError("Zenoh session is closed")
@@ -55,17 +69,25 @@ class ServiceClient[ReqT: RosMessage, ResT: RosMessage]:
                 self._service_name,
                 payload=cdr_payload,
                 timeout=timeout,
+                cancellation_token=cancellation_token,
             )
             for reply in itertools.islice(replies, 1):
                 if reply.ok:
                     return self._srv_types.Response.deserialize(bytes(reply.ok.payload))
 
                 err = reply.err
-                assert err is not None, "reply.err must be set when reply.ok is falsy"
+                if err is None:
+                    raise ServiceInvokeException(
+                        "Service returned an error reply without error details"
+                    )
                 raise ServiceInvokeException(
                     f"Service error occurred: {err.payload.to_string()}"
                 )
 
+            if timeout is not None:
+                raise ServiceTimeoutException(
+                    f"Service request timed out after {timeout} ms"
+                )
             raise ServiceNotAvailableException("The requested service is not available")
         except zenoh.ZError as error:
             raise ServiceInvokeException(

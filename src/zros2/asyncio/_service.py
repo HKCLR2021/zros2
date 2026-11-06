@@ -8,17 +8,17 @@ event loop.
 
 import asyncio
 
-from .._namespace import join_name
-from .._session import ZenohSessionProxy
-from ..endpoints._service import ServiceClient
-from ..types._base import RosMessage
-from ..types._protocols import RosService
+from zros2._namespace import join_name
+from zros2._session import ZenohSessionProxy
+from zros2.endpoints._service import ServiceClient
+from zros2.types._base import RosMessage
+from zros2.types._protocols import RosService
 
 
 async def _invoke_service[ReqT: RosMessage, ResT: RosMessage](
     session: ZenohSessionProxy,
     service_name: str,
-    srv_type: type[RosService[ReqT, ResT]],
+    srv_type: RosService[ReqT, ResT],
     body: ReqT | None = None,
     timeout: int | None = None,
     *,

@@ -7,7 +7,7 @@
 - **Language:** Python >= 3.12
 - **Build system:** setuptools (`pyproject.toml`)
 - **Testing:** pytest + pytest-asyncio
-- **Key dependencies:** `eclipse-zenoh>=1.9.0`, `pycdr2>=1.0.0`, `numpy>=2.4.6`, `lark>=1.3.0`
+- **Key dependencies:** `eclipse-zenoh>=1.9.0`, `pycdr2>=1.0.0`, `lark>=1.3.0`
 - **License:** Proprietary
 
 ## Layout
@@ -28,7 +28,8 @@
     `ServiceClient`, `Action`, `GoalHandle`), discovery (`Liveliness`,
     `LivelinessType`, `Qos`), the type protocols/containers, and the
     built-in action protocol messages (`GoalInfo`, `GoalStatus`,
-    `GoalStatusArray`, `CancelGoal_Request`, `CancelGoal_Response`).
+    `GoalStatusArray`, `CancelGoal_Request`, `CancelGoal_Response`), and
+    `__version__`.
   - `zros2.exceptions` — the exception hierarchy (`ZRos2Exception`, the
     `Service*Exception` and `Action*Exception` subtypes).
   - `zros2.asyncio` — optional asyncio facade: the client-bound
@@ -129,12 +130,12 @@ Adding or removing a public symbol requires updating, in one change:
 
 ### Type Checking
 
-- `pyrightconfig.json` pins the checking policy: `reportUnusedFunction` is
-  enabled project-wide; unknown-type rules are **not** enabled for
-  `tests/` and `benchmarks/` (mock-heavy code legitimately produces
-  `Unknown`).
-- `# pyright: ignore[...]` comments are only added where the rule actually
-  fires (or defensively for a documented reason); always name the rule.
+- `pyrightconfig.json` type-checks **`src` only**; `reportUnusedImport` is
+  an error. `tests/` and `benchmarks/` are intentionally outside the
+  type-checking scope and are validated by runtime tests.
+- Do **not** add `# pyright: ignore` in `src`; fix the annotation or the type
+  boundary instead. Zenoh's own incomplete typing is an external concern and
+  is not a target for documentation or static typing work.
 
 ### Error Handling
 
@@ -143,9 +144,11 @@ Adding or removing a public symbol requires updating, in one change:
   ZRos2Exception
   ├── ServiceException
   │   ├── ServiceNotAvailableException
+  │   ├── ServiceTimeoutException
   │   └── ServiceInvokeException
   └── ActionException
       ├── ActionNotAvailableException
+      ├── ActionTimeoutException
       └── ActionInvokeException
   ```
 - Raise specific exceptions; catch broadly only at public API boundaries.
@@ -174,12 +177,20 @@ Adding or removing a public symbol requires updating, in one change:
 - Generation flow: CLI → `pipeline.build_plan` → codegen → `pipeline.writer`.
 - Package boundaries:
   - `parsing/` produces models (``.action`` files yield ``ActionSource``:
-    goal / result / feedback only)
-  - `semantics/` resolves types / defaults / naming helpers, and expands
-    actions into the eight ROS 2 types (``expand_action`` / ``ACTION_SPEC``)
-  - `codegen/` turns models into AST/source
+    goal / result / feedback only); it must not import upper layers
+  - `semantics/` owns literal/default/bound/native-type semantics and
+    ``expand_action``; it must not import `ast`, `codegen`, or `pipeline`
+  - `codegen/` renders semantic models to AST/source; it must not import
+    `pipeline`, and sibling modules must not import each other's private
+    implementation (notably `_stubs` must not import `_message`;
+    `_merge.py` must not import renderers)
   - `pipeline/` owns collect/merge/validate/write orchestration
+- Import style: same-package imports use relative `.`, cross-package imports
+  are absolute `zros2...`; parent-relative `..` / `...` imports are forbidden
+  and enforced by `tests/test_architecture.py`.
 - Use `pycdr2.IdlMeta` metaclass for generated dataclasses.
+- Keep `tests/test_architecture.py` green; it is the executable source of
+  truth for the dependency direction above.
 
 ## Commit & PR Conventions
 
@@ -193,9 +204,12 @@ Adding or removing a public symbol requires updating, in one change:
 Run these checks before every commit:
 
 - [ ] **Full test suite** — `pytest` passes with no new failures.
+- [ ] **Lint / import sorting** — `ruff check src tests benchmarks` passes
+  (imports sorted, no unused imports).
 - [ ] **Type checking** — `npx pyright` (or the IDE language server) reports
-  **0 errors and 0 warnings** for the whole project, including touched and
-  affected files.
+  **0 errors and 0 warnings** for `src` (the configured type-check scope).
+  Tests and benchmarks are intentionally excluded; they are covered by runtime
+  tests, not static typing.
 - [ ] **Public API completeness** — if public symbols changed: the owning
   package `__init__.py` + `__all__`, the README (protocol table / usage
   examples), `.rules`, and the contract whitelist in
@@ -210,8 +224,8 @@ Run these checks before every commit:
   (e.g. `zros2.types._utils`, `zros2._session`) in README or docstring
   examples.
 - [ ] **No dead code** — new `_`-prefixed functions are either exercised by
-  tests (then the named `# pyright: ignore[reportUnusedFunction]` is
-  justified) or removed; no silently unused code.
+  tests (and exported via `__all__` where needed) or removed; no silently
+  unused code and no pyright suppressions.
 - [ ] **Diff review** — `git --no-pager diff` shows only intended changes: no
   stray files, debug leftovers, or unrelated edits.
 - [ ] **Commit message** — imperative mood, ≤ 72-char subject line, scope
@@ -229,8 +243,26 @@ Run these checks before every commit:
 8. **Prefer surgical edits** — change only what's needed to solve the task.
 9. **Exception:** don't fix unrelated bugs unless they block the task.
 10. **Docstrings for public APIs only** — internal functions/methods use minimal or no docstring.
-11. **Language server must stay clean** — after any change, pyright (and the
-    IDE language server) must report **0 errors and 0 warnings** for the
-    project, including touched and affected files. Do not leave new
-    diagnostics behind; if a diagnostic is intentional, suppress it with a
-    named `# pyright: ignore[...]` and a reason.
+11. **Language server must stay clean** — after any change, pyright must
+    report **0 errors and 0 warnings** for `src` (the configured type-check
+    scope). Tests and benchmarks are excluded. Do not add `# pyright: ignore`;
+    fix the type boundary instead. Zenoh's external typing gaps are out of
+    scope and must not be worked around by lowering the global checking mode.
+
+## Documentation language
+
+- The repository root `README.md` is English.
+- Files under `docs/` without a suffix are English; Chinese translations use
+  the `_zh.md` suffix.
+- `docs/README.md` is the language/entry-point index. When adding or renaming a
+  doc, update that index and all language links in the same change.
+- Do not introduce a language variant without the suffix convention.
+
+## Vendored ROS 2 definitions
+
+- `src/zros2/generator/assets/builtin_msgs/` is vendored external data.
+  Never hand-edit individual `.msg` / `.srv` / `.action` files.
+- Refresh assets only as a complete upstream import with provenance/version
+  recorded; do not mix asset changes with code changes.
+- Generator/tests must adapt to the vendored definitions, not modify them to
+  satisfy local tests.

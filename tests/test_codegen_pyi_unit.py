@@ -1,7 +1,7 @@
 """Component-level tests for ``zros2.generator.codegen._stubs``.
 
 Tests the stub (``.pyi``) generator in isolation:
-- ``_stub_annotation`` type translation
+- ``stub_annotation`` type translation
 - ``generate_stub_module`` output structure and syntax
 - Import deduplication and annotation correctness
 """
@@ -9,14 +9,14 @@ Tests the stub (``.pyi``) generator in isolation:
 import ast
 import hashlib
 
-from zros2.generator.codegen._stubs import (
-    _stub_annotation,
-    generate_stub_module,
-)
+import pytest
+
+from zros2.generator.codegen._stubs import generate_stub_module
 from zros2.generator.parsing._models import MsgDefinition, MsgField
+from zros2.generator.semantics._native_types import stub_annotation
 
 # ======================================================================
-# _stub_annotation — ROS type string → pure-Python type hint
+# stub_annotation — ROS type string → pure-Python type hint
 # ======================================================================
 
 
@@ -24,63 +24,65 @@ class TestStubAnnotation:
     """Translating ROS 2 type strings to native Python types."""
 
     def test_primitive_int32(self):
-        assert _stub_annotation("int32") == "int"
+        assert stub_annotation("int32") == "int"
 
     def test_primitive_uint8(self):
-        assert _stub_annotation("uint8") == "int"
+        assert stub_annotation("uint8") == "int"
 
     def test_primitive_float64(self):
-        assert _stub_annotation("float64") == "float"
+        assert stub_annotation("float64") == "float"
 
     def test_primitive_bool(self):
-        assert _stub_annotation("bool") == "bool"
+        assert stub_annotation("bool") == "bool"
 
     def test_primitive_string(self):
-        assert _stub_annotation("string") == "str"
+        assert stub_annotation("string") == "str"
 
     def test_primitive_wstring(self):
-        assert _stub_annotation("wstring") == "str"
+        with pytest.raises(ValueError, match="wstring is not supported"):
+            stub_annotation("wstring")
 
     def test_primitive_byte(self):
-        assert _stub_annotation("byte") == "int"
+        assert stub_annotation("byte") == "int"
 
     def test_primitive_char(self):
-        assert _stub_annotation("char") == "int"
+        assert stub_annotation("char") == "int"
 
     def test_sequence_unbounded(self):
-        assert _stub_annotation("int32[]") == "Sequence[int]"
-        assert _stub_annotation("sequence<int32>") == "Sequence[int]"
+        assert stub_annotation("int32[]") == "Sequence[int]"
+        assert stub_annotation("sequence<int32>") == "Sequence[int]"
 
     def test_sequence_bounded(self):
-        assert _stub_annotation("sequence<uint8,10>") == "Sequence[int]"
-        assert _stub_annotation("int32[<=5]") == "Sequence[int]"
+        assert stub_annotation("sequence<uint8,10>") == "Sequence[int]"
+        assert stub_annotation("int32[<=5]") == "Sequence[int]"
 
     def test_array_fixed(self):
-        assert _stub_annotation("float64[3]") == "tuple[float, ...]"
+        assert stub_annotation("float64[3]") == "tuple[float, ...]"
 
     def test_array_fixed_int(self):
-        assert _stub_annotation("int32[16]") == "tuple[int, ...]"
+        assert stub_annotation("int32[16]") == "tuple[int, ...]"
 
     def test_array_const_size(self):
-        assert _stub_annotation("int32[COUNT]") == "tuple[int, ...]"
+        assert stub_annotation("int32[COUNT]") == "tuple[int, ...]"
 
     def test_bounded_str(self):
-        assert _stub_annotation("string<=128") == "str"
-        assert _stub_annotation("string<=MAX_LEN") == "str"
-        assert _stub_annotation("wstring<=10") == "str"
+        assert stub_annotation("string<=128") == "str"
+        assert stub_annotation("string<=MAX_LEN") == "str"
+        with pytest.raises(ValueError, match="wstring is not supported"):
+            stub_annotation("wstring<=10")
 
     def test_bounded_string_array(self):
-        assert _stub_annotation("string<=10[]") == "Sequence[str]"
+        assert stub_annotation("string<=10[]") == "Sequence[str]"
 
     def test_nested_type_preserved(self):
-        assert _stub_annotation("Header") == "Header"
-        assert _stub_annotation("Point") == "Point"
+        assert stub_annotation("Header") == "Header"
+        assert stub_annotation("Point") == "Point"
 
     def test_fully_qualified_type_preserved(self):
-        assert _stub_annotation("String") == "String"
+        assert stub_annotation("String") == "String"
 
     def test_no_mapping_needed(self):
-        assert _stub_annotation("SomeCustomType") == "SomeCustomType"
+        assert stub_annotation("SomeCustomType") == "SomeCustomType"
 
 
 # ======================================================================
@@ -142,7 +144,7 @@ class TestGenerateStubStructure:
             fields=[MsgField(name="x", type_str="float64")],
         )
         stub = generate_stub_module(defn)
-        sha_line = next(l for l in stub.splitlines() if l.startswith("# SHA1:"))
+        sha_line = next(line for line in stub.splitlines() if line.startswith("# SHA1:"))
         sha_value = sha_line.split(": ", 1)[1]
         body = stub.split("\n\n", 1)[1]
         expected = hashlib.sha1(body.encode("utf-8")).hexdigest()
@@ -292,8 +294,50 @@ class TestGenerateStubConstants:
         assert "ClassVar[int]" in stub
         assert "ClassVar[float]" in stub
 
-    def test_constant_with_external_import(self):
-        """A constant with a type needing external import (time/duration)."""
+    def test_string_constant_is_valid_python(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
+            constants=[
+                MsgField(
+                    name="GREETING",
+                    type_str="string",
+                    default="hello world",
+                    is_constant=True,
+                )
+            ],
+        )
+        stub = generate_stub_module(defn)
+        compile(stub, "<stub>", "exec")
+        assert "GREETING: ClassVar[str] = 'hello world'" in stub
+
+    def test_field_default_is_reflected(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
+            fields=[
+                MsgField(name="x", type_str="int32", default="7"),
+                MsgField(name="name", type_str="string", default="anonymous"),
+            ],
+        )
+        stub = generate_stub_module(defn)
+        assert "x: int=7" in stub
+        assert "name: str='anonymous'" in stub
+
+    def test_nested_init_default_is_none(self):
+        defn = MsgDefinition(
+            package="test",
+            type_name="Foo",
+            type_kind="msg",
+            fields=[MsgField(name="header", type_str="std_msgs/msg/Header")],
+        )
+        stub = generate_stub_module(defn)
+        assert "header: Header | None=None" in stub
+
+    def test_time_constant_is_rejected(self):
+        """A time constant is not a ROS primitive constant; reject it."""
         defn = MsgDefinition(
             package="test",
             type_name="Foo",
@@ -302,9 +346,8 @@ class TestGenerateStubConstants:
                 MsgField(name="NOW", type_str="time", default="0", is_constant=True)
             ],
         )
-        stub = generate_stub_module(defn)
-        assert "ClassVar" in stub
-        assert "builtin_interfaces" in stub
+        with pytest.raises(ValueError, match="not supported"):
+            generate_stub_module(defn)
 
 
 # ======================================================================

@@ -7,14 +7,11 @@ Tests the pre-built registry AST in isolation:
 
 import ast
 
-from zros2.generator.codegen._registry import (
-    REGISTRY_AST,
-    _reg_action_section,
-    _reg_header,
-    _reg_helper,
-    _reg_message_section,
-    _reg_service_section,
-)
+from zros2.generator.codegen._registry import REGISTRY_AST
+from zros2.generator.codegen._registry_actions import _reg_action_section
+from zros2.generator.codegen._registry_common import _reg_header, _reg_helper
+from zros2.generator.codegen._registry_messages import _reg_message_section
+from zros2.generator.codegen._registry_services import _reg_service_section
 
 
 def _unparse_stmts(stmts: list[ast.stmt]) -> str:

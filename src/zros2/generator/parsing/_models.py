@@ -25,8 +25,8 @@ class MsgDefinition:
     package: str
     type_name: str
     type_kind: str  # "msg", "srv", or "action"
-    fields: list[MsgField] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
-    constants: list[MsgField] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    fields: list[MsgField] = field(default_factory=list)
+    constants: list[MsgField] = field(default_factory=list)
     full_name: str = ""
 
     def __post_init__(self) -> None:

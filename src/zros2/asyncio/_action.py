@@ -13,25 +13,27 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from .._namespace import join_name
-from .._session import ZenohSessionProxy
-from ..endpoints._action import Action
-from ..exceptions import ActionInvokeException
-from ..types._base import RosMessage
-from ..types._protocols import RosAction
+import zenoh
+
+from zros2._namespace import join_name
+from zros2._session import ZenohSessionProxy
+from zros2.endpoints._action import Action
+from zros2.exceptions import ActionInvokeException
+from zros2.types._base import RosMessage
+from zros2.types._protocols import RosAction
 
 _FEEDBACK_QUEUE_MAX = 100
 
 
-class _GetResultResponseView[ResultT: RosMessage](Protocol):
-    """Minimal view of a generated ``GetResult_Response``."""
+class _GetResultResponseView[ResultT: RosMessage](RosMessage, Protocol):
+    """Protocol view of a generated ``GetResult_Response``."""
 
     status: int
     result: ResultT
 
 
-class _FeedbackMessageView[FeedbackT: RosMessage](Protocol):
-    """Minimal view of a generated ``FeedbackMessage``."""
+class _FeedbackMessageView[FeedbackT: RosMessage](RosMessage, Protocol):
+    """Protocol view of a generated ``FeedbackMessage``."""
 
     feedback: FeedbackT
 
@@ -72,17 +74,15 @@ async def _invoke_action[
 ](
     session: ZenohSessionProxy,
     action_name: str,
-    action_type: type[
-        RosAction[
-            SGReqT,
-            SGResT,
-            GRReqT,
-            GRResT,
-            FBMsgT,
-            GoalT,
-            ResultT,
-            FeedbackT,
-        ]
+    action_type: RosAction[
+        SGReqT,
+        SGResT,
+        GRReqT,
+        GRResT,
+        FBMsgT,
+        GoalT,
+        ResultT,
+        FeedbackT,
     ],
     goal: GoalT | None = None,
     timeout: int | None = None,
@@ -140,8 +140,11 @@ async def _invoke_action[
         if not goal_handle.accepted:
             raise ActionInvokeException("Goal rejected by the action server")
 
+        cancellation_token = zenoh.CancellationToken()
         result_task = asyncio.create_task(
-            asyncio.to_thread(action_client.get_result, goal_handle, timeout)
+            asyncio.to_thread(
+                action_client.get_result, goal_handle, timeout, cancellation_token
+            )
         )
         feedback_pending: asyncio.Task[FBMsgT] | None = None
         try:
@@ -174,6 +177,7 @@ async def _invoke_action[
             if feedback_pending is not None and not feedback_pending.done():
                 feedback_pending.cancel()
             if not result_task.done():
+                cancellation_token.cancel()
                 result_task.cancel()
 
 

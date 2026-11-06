@@ -352,11 +352,16 @@ class TestEntityBuilder:
 class TestLivelinessClass:
     """Tests for :class:`zros2.discovery._liveliness.Liveliness`."""
 
+    def test_all_entity_uses_all_key(self):
+        """LivelinessType.ALL is supported via the global liveliness key."""
+        liv = Liveliness(MagicMock(), LivelinessType.ALL)
+        assert liv._ke == "@/*/@ros2_lv/**"
+
     def test_unsupported_entity_raises_value_error(self):
-        """Passing an entity type not in _ENTITY_BUILDER should raise ValueError."""
+        """Passing a non-entity value should raise ValueError."""
         session = MagicMock()
         with pytest.raises(ValueError, match="Unsupported entity type"):
-            Liveliness(session, LivelinessType.ALL)  # ALL is not in builder
+            Liveliness(session, 99)  # type: ignore[arg-type]
 
     def test_no_qos_defaults_to_any(self):
         """When qos is None, it defaults to Qos.any()."""
@@ -467,7 +472,9 @@ class TestLivelinessClass:
         results = liv.get()
         assert len(results) == 1
         assert results[0].key_expr == "test/ke"
-        session.liveliness.return_value.get.assert_called_once_with(liv._ke)
+        session.liveliness.return_value.get.assert_called_once_with(
+            liv._ke, timeout=None
+        )
 
     def test_get_skips_error_replies(self):
         """``get()`` drops error replies and only returns successful samples."""
@@ -499,7 +506,9 @@ class TestLivelinessClass:
         session.liveliness.return_value.declare_subscriber.return_value = mock_sub
 
         liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
-        callback = lambda s: None
+        def callback(_sample: object) -> None:
+            return None
+
         result = liv.subscribe(callback)
         assert result is mock_sub
         assert liv._sub is mock_sub
@@ -526,7 +535,9 @@ class TestLivelinessClass:
         liv = Liveliness(session, LivelinessType.SERVICE_SERVER, name="echo")
         liv._sub = old_sub
 
-        callback = lambda s: None
+        def callback(_sample: object) -> None:
+            return None
+
         result = liv.subscribe(callback)
         assert result is new_sub
         assert liv._sub is new_sub

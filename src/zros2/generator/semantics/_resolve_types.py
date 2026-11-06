@@ -8,11 +8,14 @@ Type expressions are parsed via :mod:`zros2.generator.parsing._types`
 recognised.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from lark import LarkError
 
-from ..parsing._types import ROS2_PRIMITIVE_TYPES, TypeInfo, parse_type
+from zros2.generator.parsing._types import ROS2_PRIMITIVE_TYPES, TypeInfo, parse_type
+
+from ._bounds import resolve_bound
 from ._utilities import to_snake_case
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -118,6 +121,8 @@ def resolve_type(
     type_str: str,
     current_package: str = "",
     root_package: str = "",
+    *,
+    constants: Mapping[str, int] | None = None,
 ) -> ResolvedType:
     """Resolve a ROS 2 type string to a pycdr2 annotation expression.
 
@@ -132,11 +137,23 @@ def resolve_type(
     """
     type_str = type_str.strip()
 
+    def _render_bound(value: int | str | None) -> str | None:
+        if value is None:
+            return None
+        return str(resolve_bound(value, constants or {}, "type bound"))
+
     try:
         info = parse_type(type_str)
     except LarkError:
         # Fall through — treat as an opaque identifier (edge case).
         info = TypeInfo(base_name=type_str)
+
+    if info.base_name == "wstring":
+        raise ValueError(
+            "wstring is not supported: ROS 2 encodes wstring as UTF-16LE, "
+            "but the pycdr2 backend has no wide-string CDR type. Use string "
+            "or add a dedicated wide-string codec."
+        )
 
     # Container types (array / sequence) take priority over scalar
     # checks so that e.g. ``string<=10[]`` correctly resolves to
@@ -144,9 +161,14 @@ def resolve_type(
 
     # ── Sequence: sequence<T> / sequence<T, N> ─────────────────────────
     if info.kind in ("unbounded_sequence", "bounded_sequence"):
-        inner = resolve_type(inner_type_str(info), current_package, root_package)
+        inner = resolve_type(
+            inner_type_str(info),
+            current_package,
+            root_package,
+            constants=constants,
+        )
         if info.kind == "bounded_sequence" and info.array_max is not None:
-            expr = f"sequence[{inner.annotation_expr}, {info.array_max}]"
+            expr = f"sequence[{inner.annotation_expr}, {_render_bound(info.array_max)}]"
         else:
             expr = f"sequence[{inner.annotation_expr}]"
         imports = set(inner.import_names) | {"sequence"}
@@ -154,16 +176,21 @@ def resolve_type(
 
     # ── Array: type[] / type[N] / type[<=N] ────────────────────────────
     if info.kind in ("unbounded", "fixed", "bounded"):
-        inner = resolve_type(inner_type_str(info), current_package, root_package)
+        inner = resolve_type(
+            inner_type_str(info),
+            current_package,
+            root_package,
+            constants=constants,
+        )
 
         if info.kind == "unbounded":
             expr = f"sequence[{inner.annotation_expr}]"
             imports = set(inner.import_names) | {"sequence"}
         elif info.kind == "fixed":
-            expr = f"array[{inner.annotation_expr}, {info.array_size}]"
+            expr = f"array[{inner.annotation_expr}, {_render_bound(info.array_size)}]"
             imports = set(inner.import_names) | {"array"}
         else:  # bounded dynamic array: type[<=N] → sequence[T, N]
-            expr = f"sequence[{inner.annotation_expr}, {info.array_max}]"
+            expr = f"sequence[{inner.annotation_expr}, {_render_bound(info.array_max)}]"
             imports = set(inner.import_names) | {"sequence"}
 
         return _wrap(expr, imports, inner.external_import)
@@ -171,7 +198,7 @@ def resolve_type(
     # ── Bounded string (scalar): string<=N / wstring<=N ────────────────
     if info.is_bounded_string:
         return ResolvedType(
-            annotation_expr=f"bounded_str[{info.string_max}]",
+            annotation_expr=f"bounded_str[{_render_bound(info.string_max)}]",
             import_names=frozenset({"bounded_str"}),
         )
 

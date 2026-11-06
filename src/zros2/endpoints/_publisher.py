@@ -5,8 +5,9 @@ from contextlib import suppress
 
 import zenoh
 
-from .._session import ZenohSessionProxy
-from ..types._base import RosMessage
+from zros2._namespace import normalize_graph_name
+from zros2._session import ZenohSessionProxy
+from zros2.types._base import RosMessage
 
 
 class Publisher[MsgT: RosMessage]:
@@ -24,11 +25,11 @@ class Publisher[MsgT: RosMessage]:
         topic: str,
         message_type: type[MsgT],
     ) -> None:
-        self._topic = topic
+        self._topic = normalize_graph_name(topic)
         self._message_type = message_type
         self._zenoh_session = zenoh_session
         self._publisher: zenoh.Publisher | None = self._zenoh_session.declare_publisher(
-            topic
+            self._topic
         )
 
     def __enter__(self) -> "Publisher[MsgT]":

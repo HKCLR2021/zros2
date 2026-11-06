@@ -2,7 +2,7 @@
 
 import pathlib
 
-from ..codegen._file import GeneratedFile
+from zros2.generator.codegen._file import GeneratedFile
 
 
 def write_generated_files(files: list[GeneratedFile]) -> list[pathlib.Path]:

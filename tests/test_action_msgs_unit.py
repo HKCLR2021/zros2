@@ -16,7 +16,7 @@ class TestActionMsgs:
     """CDR round-trips and dict conversion for the built-in types."""
 
     def test_time_is_part_of_goal_info_round_trip(self):
-        goal = GoalInfo(goal_id=tuple(range(16)))
+        goal = GoalInfo(goal_id=bytes(range(16)))
         restored = GoalInfo.deserialize(goal.serialize())
 
         assert restored.goal_id == bytes(range(16))
@@ -24,7 +24,7 @@ class TestActionMsgs:
         assert restored.stamp.nanosec == 0
 
     def test_cancel_request_round_trip(self):
-        request = CancelGoal_Request(goal_info=GoalInfo(goal_id=tuple(range(16))))
+        request = CancelGoal_Request(goal_info=GoalInfo(goal_id=bytes(range(16))))
         restored = CancelGoal_Request.deserialize(request.serialize())
 
         assert restored.goal_info.goal_id == bytes(range(16))
@@ -32,7 +32,7 @@ class TestActionMsgs:
     def test_cancel_response_round_trip(self):
         response = CancelGoal_Response(
             return_code=0,
-            goals_canceling=[GoalInfo(goal_id=tuple(range(16)))],
+            goals_canceling=[GoalInfo(goal_id=bytes(range(16)))],
         )
         restored = CancelGoal_Response.deserialize(response.serialize())
 
@@ -69,15 +69,13 @@ class TestActionMsgs:
     def test_to_dict_from_dict_round_trip(self):
         response = CancelGoal_Response(
             return_code=1,
-            goals_canceling=[GoalInfo(goal_id=tuple(range(16)))],
+            goals_canceling=[GoalInfo(goal_id=bytes(range(16)))],
         )
         data = response.to_dict()
         restored = CancelGoal_Response.from_dict(data)
 
         assert restored.return_code == 1
-        # from_dict passes the dict value through, so the array keeps its
-        # constructor-side representation (tuple)
-        assert cast(list, restored.goals_canceling)[0].goal_id == tuple(range(16))
+        assert cast(list, restored.goals_canceling)[0].goal_id == bytes(range(16))
 
     def test_structurally_satisfies_ros_message(self):
         instance = GoalStatusArray()

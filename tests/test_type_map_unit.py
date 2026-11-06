@@ -6,6 +6,8 @@ code path, including edge cases for bounded strings, sequences, arrays,
 external imports, and the ``root_package`` prefix logic.
 """
 
+import pytest
+
 from zros2.generator.parsing._types import TypeInfo
 from zros2.generator.semantics._resolve_types import (
     ResolvedType,
@@ -84,10 +86,9 @@ class TestResolveScalarPrimitives:
         assert rt.annotation_expr == "str"
         assert rt.import_names == frozenset()  # Python builtin
 
-    def test_wstring(self):
-        rt = resolve_type("wstring")
-        assert rt.annotation_expr == "str"
-        assert rt.import_names == frozenset()
+    def test_wstring_is_rejected(self):
+        with pytest.raises(ValueError, match="wstring is not supported"):
+            resolve_type("wstring")
 
     def test_uint8(self):
         rt = resolve_type("uint8")
@@ -146,10 +147,9 @@ class TestResolveBoundedString:
         assert rt.import_names == frozenset({"bounded_str"})
         assert rt.external_import is None
 
-    def test_bounded_wstring(self):
-        rt = resolve_type("wstring<=10")
-        assert "bounded_str" in rt.annotation_expr
-        assert "10" in rt.annotation_expr
+    def test_bounded_wstring_is_rejected(self):
+        with pytest.raises(ValueError, match="wstring is not supported"):
+            resolve_type("wstring<=10")
 
     def test_bounded_string_value_of_1(self):
         rt = resolve_type("string<=1")

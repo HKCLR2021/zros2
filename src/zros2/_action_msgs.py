@@ -40,6 +40,21 @@ from pycdr2.types import array, int8, int32, sequence, uint8, uint32
 from .types._utils import from_attributes as _from_attributes
 
 
+def _goal_id_bytes(value: object) -> bytes:
+    """Normalize a goal UUID to its 16-byte wire representation."""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+    elif isinstance(value, (list, tuple)):
+        raw = bytes(value)
+    else:
+        raise TypeError(
+            f"goal_id must be bytes or a sequence of ints, got {type(value).__name__}"
+        )
+    if len(raw) != 16:
+        raise ValueError(f"goal_id must be exactly 16 bytes, got {len(raw)}")
+    return raw
+
+
 @dataclasses.dataclass(init=False)
 class Time(IdlStruct):
     """``builtin_interfaces/msg/Time`` — seconds + nanoseconds."""
@@ -47,7 +62,7 @@ class Time(IdlStruct):
     sec: int = 0
     nanosec: int = 0
 
-    __annotations__ = {"sec": int32, "nanosec": uint32}  # pyright: ignore[reportUnannotatedClassAttribute]
+    __annotations__ = {"sec": int32, "nanosec": uint32}
 
     def __init__(self, *, sec: int = 0, nanosec: int = 0) -> None:
         self.sec = sec
@@ -69,10 +84,10 @@ class Time(IdlStruct):
 class GoalInfo(IdlStruct):
     """``action_msgs/msg/GoalInfo`` — goal UUID and creation time."""
 
-    goal_id: tuple[int, ...] = (0,) * 16
+    goal_id: bytes = b"\x00" * 16
     stamp: Time = dataclasses.field(default_factory=Time)
 
-    __annotations__ = {  # pyright: ignore[reportUnannotatedClassAttribute]
+    __annotations__ = {
         "goal_id": array[uint8, 16],
         "stamp": Time,
     }
@@ -80,10 +95,10 @@ class GoalInfo(IdlStruct):
     def __init__(
         self,
         *,
-        goal_id: tuple[int, ...] = (0,) * 16,
+        goal_id: bytes = b"\x00" * 16,
         stamp: Time | None = None,
     ) -> None:
-        self.goal_id = goal_id
+        self.goal_id = _goal_id_bytes(goal_id)
         self.stamp = stamp if stamp is not None else Time()
 
     def to_dict(self) -> dict[str, object]:
@@ -92,7 +107,7 @@ class GoalInfo(IdlStruct):
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "GoalInfo":
         return GoalInfo(
-            goal_id=cast(tuple[int, ...], data["goal_id"]),
+            goal_id=_goal_id_bytes(data["goal_id"]),
             stamp=Time.from_dict(cast(dict[str, object], data["stamp"])),
         )
 
@@ -116,7 +131,7 @@ class GoalStatus(IdlStruct):
     goal_info: GoalInfo = dataclasses.field(default_factory=GoalInfo)
     status: int = 0
 
-    __annotations__ = {  # pyright: ignore[reportUnannotatedClassAttribute]
+    __annotations__ = {
         "goal_info": GoalInfo,
         "status": int8,
     }
@@ -146,18 +161,19 @@ class GoalStatusArray(IdlStruct):
 
     status_list: Sequence[GoalStatus] = ()
 
-    __annotations__ = {"status_list": sequence[GoalStatus]}  # pyright: ignore[reportUnannotatedClassAttribute]
+    __annotations__ = {"status_list": sequence[GoalStatus]}
 
     def __init__(self, *, status_list: Sequence[GoalStatus] = ()) -> None:
         self.status_list = status_list
 
     def to_dict(self) -> dict[str, object]:
-        return {"status_list": list(self.status_list)}
+        return {"status_list": [status.to_dict() for status in self.status_list]}
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "GoalStatusArray":
+        raw = cast(Sequence[dict[str, object]], data["status_list"])
         return GoalStatusArray(
-            status_list=cast(Sequence[GoalStatus], data["status_list"])
+            status_list=[GoalStatus.from_dict(status) for status in raw]
         )
 
     @classmethod
@@ -175,7 +191,7 @@ class CancelGoal_Request(IdlStruct):
 
     goal_info: GoalInfo = dataclasses.field(default_factory=GoalInfo)
 
-    __annotations__ = {"goal_info": GoalInfo}  # pyright: ignore[reportUnannotatedClassAttribute]
+    __annotations__ = {"goal_info": GoalInfo}
 
     def __init__(self, *, goal_info: GoalInfo | None = None) -> None:
         self.goal_info = goal_info if goal_info is not None else GoalInfo()
@@ -208,7 +224,7 @@ class CancelGoal_Response(IdlStruct):
     return_code: int = 0
     goals_canceling: Sequence[GoalInfo] = ()
 
-    __annotations__ = {  # pyright: ignore[reportUnannotatedClassAttribute]
+    __annotations__ = {
         "return_code": int8,
         "goals_canceling": sequence[GoalInfo],
     }
@@ -225,14 +241,15 @@ class CancelGoal_Response(IdlStruct):
     def to_dict(self) -> dict[str, object]:
         return {
             "return_code": self.return_code,
-            "goals_canceling": list(self.goals_canceling),
+            "goals_canceling": [goal.to_dict() for goal in self.goals_canceling],
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "CancelGoal_Response":
+        raw = cast(Sequence[dict[str, object]], data["goals_canceling"])
         return CancelGoal_Response(
             return_code=cast(int, data["return_code"]),
-            goals_canceling=cast(Sequence[GoalInfo], data["goals_canceling"]),
+            goals_canceling=[GoalInfo.from_dict(goal) for goal in raw],
         )
 
     @classmethod

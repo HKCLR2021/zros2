@@ -14,7 +14,7 @@ means changing this constant — not the parser.
 
 from dataclasses import dataclass
 
-from ..parsing._models import ActionSource, MsgDefinition, MsgField
+from zros2.generator.parsing._models import ActionSource, MsgDefinition, MsgField
 
 # CDR-compatible stand-in for unique_identifier_msgs/UUID.
 GOAL_ID_TYPE = "uint8[16]"

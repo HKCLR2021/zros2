@@ -19,7 +19,7 @@ class TestZRosClientInit:
         """Passing an invalid type (e.g. int) should raise TypeError."""
         from zros2 import ZRosClient
 
-        with pytest.raises(TypeError, match="Expected str or zenoh.Config"):
+        with pytest.raises(TypeError, match="Expected str, os.PathLike, or zenoh.Config"):
             ZRosClient(42)  # type: ignore[arg-type]
 
     def test_init_with_config_file(self):
@@ -44,6 +44,29 @@ class TestZRosClientInit:
                 assert client.session is not None
             finally:
                 client.close()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_init_with_pathlib_path(self):
+        """A pathlib.Path config path should be accepted."""
+        import json
+        import tempfile
+        from pathlib import Path as PathType
+
+        config_data = {
+            "mode": "peer",
+            "scouting": {"multicast": {"enabled": False}},
+            "listen": {"endpoints": ["tcp/127.0.0.1:0"]},
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json5", delete=False) as f:
+            json.dump(config_data, f)
+            tmp_path = f.name
+
+        try:
+            from zros2 import ZRosClient
+
+            client = ZRosClient(PathType(tmp_path))
+            client.close()
         finally:
             os.unlink(tmp_path)
 

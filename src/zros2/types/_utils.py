@@ -41,7 +41,8 @@ def from_attributes[T: RosMessage](cls: type[T], obj: Any) -> T:
         KeyError: If a required field is missing from ``obj``.
         TypeError: If a field value has an incompatible type.
     """
-    assert is_dataclass(cls), f"{cls} must be a dataclass"
+    if not is_dataclass(cls):
+        raise TypeError(f"{cls!r} must be a dataclass")
     kwargs: dict[str, Any] = {}
     hints = _get_cached_hints(cls)
     for f in _get_cached_fields(cls):
@@ -53,6 +54,29 @@ def from_attributes[T: RosMessage](cls: type[T], obj: Any) -> T:
             inner = _unannotate(field_type)
             inner = _unwrap_optional(inner)
             inner = _unannotate(inner)
+            origin = get_origin(inner)
+            if origin is not None:
+                args = get_args(inner)
+                if args:
+                    element = _unannotate(_unwrap_optional(args[0]))
+                    if isinstance(element, type) and is_dataclass(element):
+                        if value is None:
+                            kwargs[f.name] = None
+                        else:
+                            converted = [
+                                item
+                                if isinstance(item, element)
+                                else from_attributes(
+                                    cast(type[RosMessage], element), item
+                                )
+                                for item in value
+                            ]
+                            kwargs[f.name] = (
+                                tuple(converted)
+                                if isinstance(value, tuple)
+                                else converted
+                            )
+                        continue
             if isinstance(inner, type) and is_dataclass(inner):
                 if value is None:
                     kwargs[f.name] = None

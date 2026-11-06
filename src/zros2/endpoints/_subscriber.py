@@ -9,8 +9,9 @@ from contextlib import suppress
 
 import zenoh
 
-from .._session import ZenohSessionProxy
-from ..types._base import RosMessage
+from zros2._namespace import normalize_graph_name
+from zros2._session import ZenohSessionProxy
+from zros2.types._base import RosMessage
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class Subscriber[MsgT: RosMessage]:
         topic: str,
         message_type: type[MsgT],
     ) -> None:
-        self._topic = topic
+        self._topic = normalize_graph_name(topic)
         self._message_type = message_type
         self._zenoh_session = zenoh_session
         self._lock = threading.RLock()
@@ -95,14 +96,15 @@ class Subscriber[MsgT: RosMessage]:
 
         Idempotent — safe to call if not currently subscribed.
         """
-        if self._subscriber is not None:
+        with self._lock:
+            subscriber = self._subscriber
+            self._subscriber = None
+        if subscriber is not None:
             try:
-                self._subscriber.undeclare()
+                subscriber.undeclare()
                 logger.debug("Unsubscribed from topic '%s'", self._topic)
             except Exception:
                 logger.exception("Failed to unsubscribe from topic '%s'", self._topic)
-            finally:
-                self._subscriber = None
 
     def close(self) -> None:
         """Close the subscription."""
@@ -124,6 +126,7 @@ class Subscriber[MsgT: RosMessage]:
                     message_type.__name__,
                     sample.key_expr,
                 )
+                return
 
             try:
                 payload_bytes = bytes(sample.payload)

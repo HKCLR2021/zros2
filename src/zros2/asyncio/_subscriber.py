@@ -11,9 +11,9 @@ import asyncio
 from contextlib import suppress
 from typing import Self
 
-from .._session import ZenohSessionProxy
-from ..endpoints._subscriber import Subscriber
-from ..types._base import RosMessage
+from zros2._session import ZenohSessionProxy
+from zros2.endpoints._subscriber import Subscriber
+from zros2.types._base import RosMessage
 
 _SUBSCRIBER_QUEUE_MAX = 100
 
@@ -96,7 +96,8 @@ class AsyncSubscriber[MsgT: RosMessage]:
         if not self._subscribed:
             await self.subscribe()
         queue = self._queue
-        assert queue is not None, "queue is created by subscribe()"
+        if queue is None:
+            raise RuntimeError("Subscriber queue is not initialized")
         message = await queue.get()
         if message is None:
             raise StopAsyncIteration

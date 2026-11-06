@@ -9,23 +9,21 @@ layer.
 import ast
 import pathlib
 
-from ..codegen._file import GeneratedFile
-from ..codegen._message import generate_message_module
-from ..codegen._package_init import generate_init_module, generate_package_init
-from ..codegen._registry import REGISTRY_AST
-from ..codegen._service_action import (
+from zros2.generator.codegen._file import GeneratedFile
+from zros2.generator.codegen._message import generate_message_module
+from zros2.generator.codegen._metadata import generated_metadata_stmts
+from zros2.generator.codegen._package_init import generate_init_module, generate_package_init
+from zros2.generator.codegen._registry import REGISTRY_AST
+from zros2.generator.codegen._root_init import generate_root_init
+from zros2.generator.codegen._service_action import (
     SRV_SUFFIXES,
     generate_action_wrappers,
     generate_service_wrappers,
 )
-from ..codegen._stubs import generate_stub_module
-from ..parsing._models import MsgDefinition
-from ..semantics._action import ACTION_SUFFIXES, ACTION_WIRE_SUFFIXES
-from ..semantics._utilities import (
-    generated_metadata_stmts,
-    header_comment,
-    to_snake_case,
-)
+from zros2.generator.codegen._stubs import generate_stub_module
+from zros2.generator.parsing._models import MsgDefinition
+from zros2.generator.semantics._action import ACTION_SUFFIXES, ACTION_WIRE_SUFFIXES
+from zros2.generator.semantics._utilities import header_comment, to_snake_case
 
 # ── 6-stage generation ─────────────────────────────────────────────
 
@@ -54,6 +52,15 @@ def generate_all(
     """
     files: list[GeneratedFile] = []
 
+    # A non-default root package is also a directory level: generated
+    # imports reference ``root_package.pkg...``, so the files must live under
+    # ``output_dir / root_package`` for those imports to resolve.  When the
+    # root package equals the output directory name (the default), the output
+    # directory itself is the package root.
+    package_root = output_dir
+    if root_package and root_package != output_dir.name:
+        package_root = output_dir / root_package
+
     # ------------------------------------------------------------------
     # Step 1: Group definitions by package -> kind (msg / srv / action)
     # ------------------------------------------------------------------
@@ -64,7 +71,7 @@ def generate_all(
         packages.setdefault(pkg, {}).setdefault(kind, []).append(defn)
 
     for pkg, subdirs in packages.items():
-        pkg_dir = output_dir / pkg
+        pkg_dir = package_root / pkg
         pkg_init = generate_package_init(pkg, sorted(subdirs.keys()), distro=distro)
         files.append(GeneratedFile(pkg_dir / "__init__.py", pkg_init))
 
@@ -230,42 +237,12 @@ def generate_all(
     ast.fix_missing_locations(reg_ast)
     reg_body = ast.unparse(reg_ast)
     registry_content = header_comment(reg_body, distro=distro) + reg_body
-    files.append(GeneratedFile(output_dir / "_registry.py", registry_content))
+    files.append(GeneratedFile(package_root / "_registry.py", registry_content))
 
     # -- Root __init__.py (exposes registry functions at the package root) --
-    _update_root_init(files, output_dir, distro=distro)
+    generate_root_init(files, package_root, packages, distro=distro)
 
     return files
-
-
-def _update_root_init(
-    files: list[GeneratedFile],
-    output_dir: pathlib.Path,
-    distro: str = "",
-) -> None:
-    """Add or update the root ``__init__.py`` to re-export ``_registry``."""
-    root_init = output_dir / "__init__.py"
-    imp = "from ._registry import has_type, get_type, get_service, get_action, iter_types  # noqa: F401"
-    # Find existing root __init__ (if any), or create a placeholder
-    for i, f in enumerate(files):
-        if f.path == root_init:
-            # Already have one — append the registry import if missing.
-            if imp not in f.content:
-                files[i] = GeneratedFile(f.path, f.content + f"\n{imp}\n")
-            return
-
-    # Create a minimal root __init__ that imports the registry.
-    # Include a package docstring so the module is self-describing.
-    package_name = output_dir.name
-    meta = ast.unparse(
-        ast.fix_missing_locations(
-            ast.Module(body=generated_metadata_stmts(), type_ignores=[])
-        )
-    ).strip()
-    docstring = f'"""Package: {package_name}."""'
-    body_content = f"{docstring}\n{imp}\n{meta}\n"
-    content = header_comment(body_content, distro=distro) + body_content
-    files.append(GeneratedFile(root_init, content))
 
 
 __all__ = [

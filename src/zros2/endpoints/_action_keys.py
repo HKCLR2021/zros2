@@ -8,6 +8,8 @@ the generator owns type layout, this module owns transport paths.
 
 from enum import StrEnum
 
+from zros2._namespace import normalize_graph_name
+
 
 class ActionChannel(StrEnum):
     """The five Zenoh channels that make up one ROS 2 action."""
@@ -29,7 +31,7 @@ def action_key(action_name: str, channel: ActionChannel) -> str:
     Returns:
         Key expression ``{action_name}/_action/{channel}``.
     """
-    return f"{action_name}/_action/{channel}"
+    return f"{normalize_graph_name(action_name)}/_action/{channel}"
 
 
 __all__ = [

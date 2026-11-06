@@ -1,337 +1,530 @@
-# zros2 内部开发者指南 / Contributor Guide
+# zros2 Internal Developer Guide
 
-> 适用版本：**zros2 2.0.0** · Python ≥ 3.12
-> 本文面向 zros2 的维护者与扩展者。使用方开发指南见 [sdk_development.md](./sdk_development.md)（中文）与 [sdk_development_en.md](./sdk_development_en.md)（英文）。**本文件的约定以 `.rules` 为权威来源**，两者冲突时以 `.rules` 为准。
-
----
-
-## 目录
-
-1. [项目概览与仓库布局](#1-项目概览与仓库布局)
-2. [运行时架构](#2-运行时架构)
-3. [生成器架构](#3-生成器架构)
-4. [公共 / 私有 API 设计约定](#4-公共--私有-api-设计约定)
-5. [Codegen ↔ Runtime ABI 契约](#5-codegen--runtime-abi-契约)
-6. [类型系统规则](#6-类型系统规则)
-7. [编码规范](#7-编码规范)
-8. [测试组织](#8-测试组织)
-9. [基准测试](#9-基准测试)
-10. [开发环境与验证](#10-开发环境与验证)
-11. [CI 说明](#11-ci-说明)
-12. [提交前检查清单](#12-提交前检查清单)
-13. [提交与 PR 约定](#13-提交与-pr-约定)
-14. [典型变更走查](#14-典型变更走查)
+> Applies to **zros2 2.0.0** · Python ≥ 3.12
+> This guide is for maintainers and contributors. User-facing documentation:
+> [SDK guide (English)](./sdk_development.md) and
+> [SDK guide (Chinese)](./sdk_development_zh.md). The Chinese contributor
+> guide is [developer_guide_zh.md](./developer_guide_zh.md). **`.rules` is the
+> authoritative source for project conventions**; if this guide conflicts with
+> it, `.rules` wins.
 
 ---
 
-## 1. 项目概览与仓库布局
+## Table of contents
 
-**zros2** 是一个基于 Zenoh 的轻量级 ROS 2 风格通信库：运行时提供发布/订阅、服务、动作、发现原语；`zros2-gen` 生成器把 `.msg` / `.srv` / `.action` 文件静态编译为 Python dataclass（`pycdr2.IdlMeta`，CDR 序列化）。
+1. [Project overview and repository layout](#1-project-overview-and-repository-layout)
+2. [Runtime architecture](#2-runtime-architecture)
+3. [Generator architecture](#3-generator-architecture)
+4. [Public / private API conventions](#4-public--private-api-conventions)
+5. [Codegen ↔ runtime ABI contract](#5-codegen--runtime-abi-contract)
+6. [Type-system rules](#6-type-system-rules)
+7. [Coding conventions](#7-coding-conventions)
+8. [Test organization](#8-test-organization)
+9. [Benchmarks](#9-benchmarks)
+10. [Development environment and verification](#10-development-environment-and-verification)
+11. [CI and release](#11-ci-and-release)
+12. [Pre-commit checklist](#12-pre-commit-checklist)
+13. [Commit and PR conventions](#13-commit-and-pr-conventions)
+14. [Typical change walkthroughs](#14-typical-change-walkthroughs)
 
-```
+---
+
+## 1. Project overview and repository layout
+
+**zros2** is a client-side ROS 2-style communication library over Zenoh. Its
+runtime provides publish/subscribe, service-client, action-client, and
+liveliness discovery primitives. The bundled `zros2-gen` generator statically
+compiles `.msg` / `.srv` / `.action` files into typed Python dataclasses backed
+by `pycdr2.IdlMeta` and CDR serialization.
+
+```text
 src/zros2/
-├── __init__.py          # 顶层公开 API 再导出（__all__）
-├── _client.py           # ZRosClient：统一入口、工厂方法、服务就绪探测
-├── _namespace.py        # join_name：设备命名空间与图名称拼接（sync/async 共用）
-├── _session.py          # ZenohSessionProxy：防破坏的共享 session 代理
-├── _action_msgs.py      # 内置 action_msgs 协议消息（GoalInfo/GoalStatus/...）
-├── exceptions.py        # 异常层次（ZRos2Exception 根）
-├── endpoints/           # Publisher / Subscriber / ServiceClient / Action / GoalHandle
-│   └── _action_keys.py  # action_key：Zenoh 上五条 `_action/` 通道
-├── types/               # RosMessage 协议、RosService/RosAction/RosActionView、容器
-├── discovery/           # Liveliness / LivelinessType / Qos / LivelinessKey
-├── asyncio/             # 可选 asyncio 门面（AsyncRobotClient 等）
-└── generator/           # zros2-gen：parsing/ → semantics/ → codegen/ → pipeline/
-    └── assets/builtin_msgs/   # 各发行版捆绑 IDL（humble/iron/jazzy/kilted/lyrical）
-tests/                   # pytest 套件
-benchmarks/              # pytest-benchmark 套件（benchmarks.py, compare.py）
+├── __init__.py          # top-level public API re-exports (__all__)
+├── _client.py           # ZRosClient: factory methods + readiness delegation
+├── _namespace.py        # join_name / graph-name normalization (sync + async)
+├── _session.py          # ZenohSessionProxy: protected shared session
+├── _action_msgs.py      # built-in action_msgs protocol messages
+├── exceptions.py        # exception hierarchy rooted at ZRos2Exception
+├── endpoints/           # Publisher / Subscriber / ServiceClient / Action
+│   ├── _action_state.py     # GoalHandle, goal state helpers
+│   ├── _action_transport.py # internal action service/subscriber plumbing
+│   └── _action_keys.py      # action_key: five `_action/` channels
+├── types/               # RosMessage, RosService, RosAction, containers
+├── discovery/           # Liveliness, Qos, LivelinessKey, readiness probes
+├── asyncio/             # optional asyncio facade (AsyncRobotClient, ...)
+└── generator/           # zros2-gen: parsing → semantics → codegen → pipeline
+    ├── parsing/         # Lark grammar → IR
+    ├── semantics/       # type/literal/default/bound semantics
+    ├── codegen/         # IR → Python AST / .pyi
+    │   ├── _message/    # context, plan, defaults, methods, assembly
+    │   ├── _merge.py    # generic source-only AST merger
+    │   ├── _service_merge.py # render + merge service/action families
+    │   ├── _service_action.py
+    │   ├── _stubs.py
+    │   └── ...
+    ├── pipeline/        # collect, plan, generate, write
+    └── assets/builtin_msgs/  # bundled IDL per distro
+tests/                   # pytest suite, including golden and architecture tests
+benchmarks/              # pytest-benchmark suites
 ```
 
-模块命名规则：实现模块一律 `_` 前缀（`_client.py`、`types/_protocols.py`），私有符号一律 `_` 前缀，且从不进入 `__all__`。
+Implementation modules use a leading `_`; private symbols also use `_` and are
+never listed in `__all__`.
 
 ---
 
-## 2. 运行时架构
+## 2. Runtime architecture
 
-### 2.1 会话所有权与代理
+### 2.1 Session ownership and proxy
 
-`ZRosClient.__init__` 打开 `zenoh.Session` 并持有它；`close()` 幂等（先检查 `is_closed()`）。所有端点只接收 `ZenohSessionProxy` 而非原生 session：
+`ZRosClient.__init__` opens and owns a `zenoh.Session`; `close()` is idempotent
+and checks `is_closed()` first. Endpoints receive a `ZenohSessionProxy`, never
+the raw session:
 
-- 代理通过 `__getattr__` 委托属性访问，但禁止 `close` / `destroy` / `__del__` / `undeclare`（抛 `PermissionError`）；
-- `__setattr__` 一律拒绝（`PermissionError`）；
-- 这样端点无法误关共享 session，生命周期只归 `ZRosClient` 管。
+- the proxy delegates attribute access through `__getattr__`, but forbids
+  `close` / `destroy` / `__del__` / `undeclare` (raises `PermissionError`);
+- `__setattr__` is rejected (`PermissionError`);
+- endpoints therefore cannot accidentally close the shared session; lifecycle
+  belongs to `ZRosClient` alone.
 
-工厂方法（以及 asyncio 门面的对应入口）用 `_namespace.join_name(namespace, name)` 拼图名称：空命名空间原样返回；非空时去掉 `name` 的前导 `/` 再拼 `{namespace}/{name}`。不要在各端点再复制这一行。
+Factory methods (and their asyncio counterparts) use
+`_namespace.join_name(namespace, name)`: slashes on both namespace and name are
+normalized; an empty namespace still strips the leading `/` from the name; a
+non-empty namespace produces `{namespace}/{name}`. Do not duplicate this logic
+inside endpoints.
 
-### 2.2 端点设计要点
+### 2.2 Endpoint design notes
 
-| 端点            | 要点                                                                                                                                                                                                                                                                             |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Publisher`     | 构造时即 `declare_publisher`；`publish` 调用 `data.serialize()`；`destroy()` 幂等，销毁后再 publish 抛 `RuntimeError`                                                                                                                                                            |
-| `Subscriber`    | 回调运行在 Zenoh 线程，**只接受同步回调**：检测到协程先 `close()` 再抛 `TypeError`（避免 “coroutine was never awaited” 泄漏）；`RLock` 保护订阅状态；重复 `subscribe` 抛 `ValueError`；反序列化异常只记日志                                                                      |
-| `ServiceClient` | 基于 zenoh `get`；错误应答抛 `ServiceInvokeException`，无应答抛 `ServiceNotAvailableException`，`zenoh.ZError` 包装为 `ServiceInvokeException`                                                                                                                                   |
-| `Action`        | 三个内部服务传输 + 两个订阅；通道路径由 `endpoints/_action_keys.action_key` 生成；`_make_srv_type` 动态构造最小服务类型类并按 `(name, request, response)` 缓存；`goal_id` 用 `os.urandom(16)` 生成；`_active_goal_ids` 集合按 goal_id 过滤反馈；取消全部使用全零通配 `(0,) * 16` |
-| `Liveliness`    | key 表达式由 `LivelinessKey` 构造/解析：`@/{zenoh_id}/@ros2_lv/{MP,MS,SS,SC,AS,AC}/...`；名称/类型中的 `/` 转义为 `§`；服务/动作 key 不带 QoS，发布/订阅 key 携带（`Qos.to_key_expr` / `from_key_expr`）                                                                         |
+| Endpoint | Notes |
+|---|---|
+| `Publisher` | Declares the Zenoh publisher at construction; `publish` calls `data.serialize()`; `destroy()` is idempotent and a later `publish` raises `RuntimeError`. |
+| `Subscriber` | Callbacks run on Zenoh threads and must be synchronous. A coroutine is closed and rejected with `TypeError` (avoiding a "never awaited" leak). An `RLock` protects subscription state; a second `subscribe` raises `ValueError`; deserialization failures are logged. |
+| `ServiceClient` | Uses Zenoh `get`; an error reply raises `ServiceInvokeException`, no reply raises `ServiceNotAvailableException`, and `zenoh.ZError` is wrapped in `ServiceInvokeException`. |
+| `Action` | `_action_state.py` owns `GoalHandle` state; `_action_transport.py` owns the three internal service calls and two subscriptions. Channel keys come from `endpoints/_action_keys.action_key`; `_make_srv_type` caches minimal service types by `(name, request, response)`. Goal IDs are `os.urandom(16)`, normalized to `bytes`; `_active_goal_ids` filters feedback; cancel-all uses an all-zero 16-byte ID. |
+| `Liveliness` | Keys are built/parsed by `LivelinessKey`: `@/{zenoh_id}/@ros2_lv/{MP,MS,SS,SC,AS,AC}/...`; `/` in names/types is escaped as `§`; service/action keys carry no QoS, pub/sub keys do (`Qos.to_key_expr` / `from_key_expr`). |
 
-### 2.3 内置 action_msgs
+Service-readiness polling lives in `discovery/_readiness.py`;
+`ZRosClient.service_is_ready()` and `wait_for_service()` are thin delegates.
 
-生成器不产出 `action_msgs` 类型，因此 `_action_msgs.py` 手工定义了 `GoalInfo` / `GoalStatus` / `GoalStatusArray` / `CancelGoal_Request` / `CancelGoal_Response`（外加 `Time`）。它们是普通 `pycdr2.IdlStruct`，结构性满足 `RosMessage`；`GoalInfo.goal_id` 用 `array[uint8, 16]` 替代 `unique_identifier_msgs/UUID`（CDR 编码相同，与生成器 `GOAL_ID_TYPE` 对齐）。类布局刻意镜像生成器的输出（`@dataclass(init=False)` + 手写 `__init__`）。
+### 2.3 Built-in action messages
 
-### 2.4 asyncio 门面（`zros2.asyncio`）
+The generator does not emit `action_msgs` types, so `_action_msgs.py` defines
+`GoalInfo` / `GoalStatus` / `GoalStatusArray` / `CancelGoal_Request` /
+`CancelGoal_Response` (plus `Time`) by hand. They are normal
+`pycdr2.IdlStruct` classes that structurally satisfy `RosMessage`.
+`GoalInfo.goal_id` uses `array[uint8, 16]` instead of
+`unique_identifier_msgs/UUID`; the CDR encoding is identical and matches the
+generator's `GOAL_ID_TYPE`. The class layout mirrors generated code
+(`@dataclass(init=False)` plus a handwritten `__init__`).
 
-核心 API 同步阻塞，门面不改变核心：
+### 2.4 asyncio facade (`zros2.asyncio`)
 
-- 阻塞调用用 `asyncio.to_thread` 卸载（`invoke_service`、`query_liveliness`、`AsyncPublisher.publish`）；
-- Zenoh 线程回调通过**有界队列（容量 100）** 桥接进事件循环：`loop.call_soon_threadsafe(_put_nowait, ...)`，`QueueFull` 时丢最旧——注意 `put_nowait` 的异常捕获必须发生在 loop 线程上，这正是 `call_soon_threadsafe` 包一层的原因；
-- 生成器（`invoke_action` / `watch_liveliness` / `AsyncSubscriber.__anext__`）的清理编排：外层 `async for` 结束后显式 `await inner.aclose()`，保证端点上下文管理器一定 undeclare；
-- 事件：`ActionFeedback(feedback)`、`ActionResult(status, result)` 为冻结 dataclass。
+The core API is synchronous; the facade does not change it:
+
+- blocking calls are offloaded with `asyncio.to_thread`
+  (`invoke_service`, `query_liveliness`, `AsyncPublisher.publish`);
+- Zenoh-thread callbacks are bridged into the loop through **bounded queues
+  (capacity 100)** using `loop.call_soon_threadsafe(_put_nowait, ...)`;
+  `QueueFull` drops the oldest entry. The `put_nowait` failure must be handled
+  on the loop thread, which is why it is wrapped in `call_soon_threadsafe`;
+- generator cleanup (`invoke_action` / `watch_liveliness` /
+  `AsyncSubscriber.__anext__`) explicitly closes the inner generator so
+  endpoint context managers always undeclare;
+- events are frozen dataclasses: `ActionFeedback(feedback)` and
+  `ActionResult(status, result)`.
 
 ---
 
-## 3. 生成器架构
+## 3. Generator architecture
 
-四阶段管线：`parsing` → `semantics` → `codegen` → `pipeline`。生成 Python 一律使用 **`ast` 模块**构造（无字符串模板）。
+Four stages: `parsing` → `semantics` → `codegen` → `pipeline`. Generated Python
+is always built with the **`ast` module**, never string templates.
 
-```
-.msg / .srv / .action 文件
+```text
+.msg / .srv / .action
         │
         ▼
 ┌─────────────┐
-│   parsing    │  Lark → IR（MsgField / MsgDefinition；.action → ActionSource）
+│   parsing    │  Lark → IR (MsgField / MsgDefinition; .action → ActionSource)
 └──────┬──────┘
        ▼
 ┌─────────────┐
-│  semantics   │  expand_action（8 个 action 类型）+ resolve_type → pycdr2 注解
+│  semantics   │  expand_action (8 action types) + type/literal/bound semantics
 └──────┬──────┘
        ▼
 ┌─────────────┐
-│   codegen    │  Python ast → 源码（dataclass + .pyi stub + 注册表）
+│   codegen    │  Python AST → source (dataclasses + .pyi + registry)
 └──────┬──────┘
        ▼
 ┌─────────────┐
-│  pipeline    │  build_plan / execute_plan / generate_all：收集、合并、校验、写盘
+│  pipeline    │  collect / plan / validate / generate / write
 └─────────────┘
-       │
-       ▼
-生成后的 Python 模块
 ```
 
-### 3.1 各阶段职责
+### 3.1 Responsibilities
 
-- **parsing/**：Lark 语法解析 `.msg` / `.srv` / `.action`。`.action` **只**产出 `ActionSource`（Goal / Result / Feedback），不编码传输字段。`_discovery.py` 定义 `VALID_DISTROS`；`find_msg_dirs` 识别含 `msg/`、`srv/` 或 `action/` 的包（也可扫描 workspace 的直接子目录）；`collect_all_types` 在收集时调用 `expand_action`，以便依赖校验看到完整的 8 个 action 类型。依赖校验剥数组/序列包装走 `parse_type`，不再用残缺 regex。
-- **semantics/**：`expand_action` / `ACTION_SPEC` / `GOAL_ID_TYPE` 是 ROS action IDL 展开的**唯一来源**（5 个传输类型在这里用 `MsgField` 列表合成，不回灌 `.msg` 文本）。`resolve_type` 解析出 `ResolvedType`。`_utilities.py` 提供默认值表达式、元数据语句、文件头注释、`to_snake_case`。
-- **codegen/**：
-  - `_file.py`：`GeneratedFile(path, content)` 冻结 dataclass；pipeline/writer **只**依赖此 DTO，不 import `_message.py`；
-  - `_message.py`：`generate_message_module`（仍再导出 `GeneratedFile` 以兼容旧导入）；
-  - `_registry.py`：`REGISTRY_AST` 是注册表的 AST 蓝图（`register`、`register_service`、`register_action`、`get_type`、`has_type`、`iter_types`、`get_service`、`get_action`）；
-  - `_service_action.py`：服务/动作 wrapper 合并生成（`SRV_SUFFIXES` 属于本模块；动作后缀表来自 `semantics._action.ACTION_SUFFIXES`）；
-  - `_package_init.py`、`_stubs.py`：包初始化模块与 `.pyi` stub。stub 的 Python 注解由 `TypeInfo` / `resolve_type` 映射（有界字符串、常量边界数组不再二次 regex）。
-- **pipeline/**：`build_plan(user_dirs, output_dir, distro, root_package)` → `GenerationPlan`；`execute_plan(plan, dry_run=...)`；`generate_all` 六阶段编排。action 子包 `__init__` 的导出过滤使用 `ACTION_WIRE_SUFFIXES`（对用户隐藏 5 个传输类型）。
+- **parsing/** — Lark parses `.msg` / `.srv` / `.action`. `.action` yields only
+  `ActionSource` (Goal / Result / Feedback); it never encodes transport fields.
+  `_discovery.py` defines `VALID_DISTROS`, `find_msg_dirs`, file iteration, and
+  dependency validation. It does not collect types and does not import
+  `semantics`.
+- **semantics/** — `expand_action` / `ACTION_SPEC` / `GOAL_ID_TYPE` are the
+  single source of truth for action IDL expansion. `_resolve_types.py` owns
+  `ResolvedType`; `_literal_values.py` turns `.msg` text into Python values
+  (without importing `ast`); `_type_context.py` centralizes constants and
+  bounds; `_native_types.py` provides the runtime/stub Python type mapping;
+  `_field_semantics.py` provides `FieldSemantics`. `_utilities.py` keeps only
+  header/naming/default helpers and no longer builds AST.
+- **codegen/** —
+  - `_file.py`: frozen `GeneratedFile(path, content)` DTO; `pipeline`/`writer`
+    depend only on this DTO;
+  - `_message/`: `__init__.py` (public entry) → `_context.py` (semantic
+    context) → `_plan.py` (field plans) → `_defaults.py` (default AST) →
+    `_methods.py` (`to_dict`/`from_dict`) → `_assemble.py` (module assembly);
+  - `_stubs.py`: consumes only `semantics` `native_stub_type` /
+    `stub_annotation` / literal values; it must not import `_message`;
+  - `_merge.py`: generic, **source-only** AST merge (import deduplication,
+    self-reference removal, body concatenation); it must not import renderers;
+  - `_service_merge.py`: renders each sub-type and delegates to `_merge.py`;
+  - `_service_action.py`: service/action wrappers and registry calls;
+    `_wrapper.py`: wrapper-class AST;
+  - `_root_init.py`: root package `__init__.py` policy;
+  - `_registry.py`: assembles `REGISTRY_AST`; sections live in
+    `_registry_common.py`, `_registry_messages.py`, `_registry_services.py`,
+    and `_registry_actions.py`; `_package_init.py`: package-level
+    `__init__.py`.
+- **pipeline/** — `_collect.py` collects and expands types; `build_plan` →
+  `GenerationPlan`; `execute_plan(plan, dry_run=...)`; `generate_all` is the
+  six-stage orchestration. Action package export filtering uses
+  `ACTION_WIRE_SUFFIXES`.
 
 ### 3.2 CLI
 
-`_cli.py`：`build_parser()` / `main()`；入口 `zros2-gen`（`pyproject.toml` 的 `[project.scripts]`）与 `python -m zros2.generator`（`__main__.py`）。参数：`--msg-dirs`、`--output`、`--ros-version`（choices=`VALID_DISTROS`）、`--root-package`、`--dry-run`。`--msg-dirs` 可以是包目录，也可以是 workspace（扫描直接子目录里含 `msg/` / `srv/` / `action/` 的包）；找不到任何包时 CLI 报错退出。
+`_cli.py` provides `build_parser()` / `main()`; entry points are `zros2-gen`
+(from `pyproject.toml`) and `python -m zros2.generator` (`__main__.py`).
+Options: `--msg-dirs`, `--output`, `--ros-version`
+(choices=`VALID_DISTROS`), `--root-package`, `--dry-run`. `--msg-dirs` accepts
+package directories or a workspace whose immediate children contain `msg/`,
+`srv/`, or `action/`; the CLI errors out when no package is found.
 
-### 3.3 内置消息资产
+### 3.3 Bundled message assets
 
-`assets/builtin_msgs/` 按发行版捆绑官方 IDL。构建产物包含这些资产（见 `pyproject.toml` 的 `[tool.setuptools.package-data]`）。用户类型与内置类型同名时用户类型覆盖。
-
----
-
-## 4. 公共 / 私有 API 设计约定
-
-### 公开面（Public surface）
-
-公开 API **只**由各包 `__init__.py` 通过 `__all__` 再导出：
-
-- `zros2`：`ZRosClient`、端点（`Publisher`、`Subscriber`、`ServiceClient`、`Action`、`GoalHandle`）、发现（`Liveliness`、`LivelinessType`、`Qos`）、类型协议/容器、内置动作协议消息（`GoalInfo`、`GoalStatus`、`GoalStatusArray`、`CancelGoal_Request`、`CancelGoal_Response`），以及 `zenoh` 的 `Reply` / `Sample` / `SampleKind`。
-- `zros2.exceptions`：`ZRos2Exception` 及 `Service*Exception` / `Action*Exception` 子类。
-- `zros2.asyncio`：`AsyncRobotClient`（接受 `ZRosClient` 或 session 代理）、`ActionFeedback` / `ActionResult` 事件、`AsyncPublisher` / `AsyncSubscriber`；**无模块级入口函数**。
-- `zros2.types`：恰好六个符号——`RosMessage`、`RosService`、`RosAction`、`RosActionView`、`ServiceTypes`、`ActionTypes`。
-- `zros2.generator`：`VALID_DISTROS`、`parse_*` 函数、`ActionSource`、`expand_action`、`ResolvedType` / `resolve_type`、`generate_all`。
-- `zros2.generator.codegen`：`GeneratedFile` 与 `generate_*` 函数（编程式 API）。
-
-协议（`RosMessage` / `RosService` / `RosAction` / `RosActionView`）是公开类型契约：生成的消息类与下游代码**结构性**满足它们，不需要继承 zros2。
-
-### 私有实现（Private implementation）
-
-- 实现模块 `_` 前缀（`_client.py`、`endpoints/_publisher.py`、`types/_protocols.py`、`generator/**/_*.py`、`_cli.py`）；私有符号 `_` 前缀且从不进入 `__all__`。
-- 内部模块可以自由改名/移动——但公开导入路径（经 `__init__.py` 再导出）不得改变；**不要**为已经移入子包的符号保留兼容 shim。
-- **文档即契约**：README 与 docstring 示例严禁出现 `_` 前缀模块的导入（如 `zros2.types._utils`、`zros2._session`）。下游需要某能力时，先提升到公开面。
-
-### 变更清单（新增/删除公开符号时，一次改动内同步更新）
-
-1. 所属包 `__init__.py` 及其 `__all__`；
-2. README（协议表 / 用法示例）；
-3. `.rules`；
-4. 生成器硬编码引用该符号时，同步更新 `tests/test_runtime_contract.py` 的白名单。
+`assets/builtin_msgs/` bundles official IDL per distro. Builds include these
+assets (see `[tool.setuptools.package-data]` in `pyproject.toml`). User types
+override builtin types with the same name.
 
 ---
 
-## 5. Codegen ↔ Runtime ABI 契约
+## 4. Public / private API conventions
 
-生成器把少量运行时符号**硬编码**进生成产物（生成 ABI）：
+### Public surface
 
-- `zros2.types` → `RosMessage`、`ServiceTypes`、`ActionTypes`
-- `zros2.types._utils` → `from_attributes`（ABI 中唯一的 `_` 前缀符号：私有模块移动后必须重新生成产物）
+Public API consists **only** of symbols re-exported through each package's
+`__init__.py` and `__all__`:
 
-`tests/test_runtime_contract.py` 的 `RUNTIME_CONTRACT` 是权威白名单，契约测试分四组：
+- `zros2`: `ZRosClient`; endpoints (`Publisher`, `Subscriber`, `ServiceClient`,
+  `Action`, `GoalHandle`); discovery (`Liveliness`, `LivelinessType`, `Qos`);
+  type protocols/containers; built-in action protocol messages (`GoalInfo`,
+  `GoalStatus`, `GoalStatusArray`, `CancelGoal_Request`,
+  `CancelGoal_Response`); `__version__`; and Zenoh's `Reply` / `Sample` /
+  `SampleKind`.
+- `zros2.exceptions`: `ZRos2Exception` and the `Service*Exception` /
+  `Action*Exception` subclasses.
+- `zros2.asyncio`: `AsyncRobotClient` (accepts a `ZRosClient` or session
+  proxy), `ActionFeedback` / `ActionResult`, `AsyncPublisher` /
+  `AsyncSubscriber`. No module-level entry points.
+- `zros2.types`: exactly six symbols — `RosMessage`, `RosService`,
+  `RosAction`, `RosActionView`, `ServiceTypes`, `ActionTypes`.
+- `zros2.generator`: `VALID_DISTROS`, `parse_*` functions, `ActionSource`,
+  `expand_action`, `ResolvedType` / `resolve_type`, `generate_all`.
+- `zros2.generator.codegen`: `GeneratedFile` and the `generate_*` functions
+  (programmatic API).
 
-| 测试组                       | 校验内容                                                                                                      |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `TestStaticImportContract`   | 生成器产出的每个 `zros2.*` 导入必须命中白名单**且**在已安装运行时中可解析；白名单不得静默漂移                 |
-| `TestRegistryContract`       | `REGISTRY_AST` 必须定义根 `__init__.py` 再导出的全部注册表函数                                                |
-| `TestContainerFieldContract` | `ServiceTypes(...)` / `ActionTypes(...)` 生成调用中的关键字必须等于容器 dataclass 字段名                      |
-| `TestProtocolContract`       | 生成的消息类满足 `RosMessage`；服务/动作 wrapper 暴露 `RosService` / `RosAction` / `RosActionView` 的全部成员 |
+The protocols (`RosMessage` / `RosService` / `RosAction` / `RosActionView`) are
+the public type contract: generated classes and downstream code satisfy them
+**structurally**, without inheriting from zros2.
 
-**改哪边都必须同步改白名单，测试会在失败时大声报错。** 例如把 `from_attributes` 移到公开模块：生成器与 `RUNTIME_CONTRACT` 要在同一次变更中更新，并重新生成既有产物。
+### Private implementation
 
----
+- Implementation modules use a leading `_` (`_client.py`,
+  `endpoints/_publisher.py`, `types/_protocols.py`,
+  `generator/**/_*.py`, `_cli.py`); private symbols are `_`-prefixed and never
+  enter `__all__`.
+- Internal modules may be moved freely, but public import paths (through
+  `__init__.py` re-exports) must not change. Do **not** keep compatibility
+  shims for symbols that already live in a subpackage.
+- **Documentation is a contract**: README and docstring examples must never
+  import `_`-prefixed modules (e.g. `zros2.types._utils`, `zros2._session`).
+  Promote a capability to the public surface before documenting it.
 
-## 6. 类型系统规则
+### Change checklist for public symbols
 
-- 泛型使用 **PEP 695 类型参数语法**并绑定 `RosMessage`（`class Publisher[MsgT: RosMessage]`、`def create_publisher[MsgT: RosMessage](...)`）。**不**定义/导出共享的模块级 TypeVar——每个类或函数各自声明。
-- `RosActionView` 是动作类型的 3 参数语义视图（`GoalT` / `ResultT` / `FeedbackT`），给只转发 goal 或观察结果/反馈的泛型消费代码用，隐藏 5 个传输子类型。
-- `@runtime_checkable` 只做**存在性检查**：`isinstance` 作用于成员协议（`RosService`、`RosAction`、`RosActionView`）只测 `hasattr(Request/Response/Goal/...)`，**不得用于运行时校验**。
-- 用结构化协议而非 ABC；`isinstance(x, RosMessage)` 仅在确实需要运行时检查时使用。
-- 注意协议内的 `ClassVar` 不能引用类自身类型参数（pyright 限制）——`_protocols.py` 中带具名 `# pyright: ignore[reportGeneralTypeIssues]` 注释，勿删。
+When adding or removing a public symbol, update in one change:
 
----
-
-## 7. 编码规范
-
-- **Python 3.12 现代语法**优先：PEP 695（类型参数）、PEP 673（`Self`）、PEP 604（`X | Y`）、PEP 698（`typing.override`）、PEP 692（TypedDict `**kwargs`）、PEP 654（`ExceptionGroup`）、PEP 646（`TypeVarTuple`）。避免 `Optional[X]` / `Union[X, Y]` / `typing.List` 等旧写法。
-- **所有函数签名与公共类属性必须有类型注解**。
-- 字符串统一**双引号**（含 docstring 与错误消息）。
-- 每个 `.py` 文件有**模块级 docstring** 说明用途。
-- docstring 用 Google 风格（`Args:` / `Raises:` / `Returns:`）；**只给公开 API 写 docstring**，内部函数尽量精简。
-- 行长：软 88、硬 99。
-- 命名：函数/方法/变量 `snake_case`；类/协议/dataclass `PascalCase`；常量与 ROS 常量字段 `UPPER_CASE`；私有符号 `_` 前缀。
-- 导入顺序：标准库 → 第三方 → 本地（空行分隔）；优先绝对导入，同包内允许相对导入；`import` 类/函数而非模块（另有说明除外）。
-- 异常层次根为 `ZRos2Exception`（见使用方文档第 11 节）；抛具体异常，只在公开 API 边界宽捕获。
-- **上下文管理器必须幂等**（`destroy()` 先检查 `None` 再 undeclare）。
-- 注释只解释非显然的意图/约束/权衡，不重复代码。
-
-### 类型检查（pyright）
-
-`pyrightconfig.json` 固定策略：`include` 为 `src`、`tests`、`benchmarks`；`reportUnusedFunction` 全局开启；`tests/` 与 `benchmarks/` **不**启用 unknown-type 规则（mock 密集代码会合法产生 `Unknown`）。`# pyright: ignore[...]` 只在规则实际触发处添加并具名规则。
-
----
-
-## 8. 测试组织
-
-pytest，无 `unittest.TestCase`；测试类用 `TestPascalCase` 描述被测单元；文件名 `test_<module_name>.py`；fixtures 集中在 `conftest.py`。
-
-| 测试文件                                                                                                                                                    | 覆盖                                                       |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `test_parser_unit.py` / `test_type_grammar.py` / `test_action_expand_unit.py`                                                                               | Lark 语法、类型表达式、字段级解析、action IDL 展开         |
-| `test_codegen_msg_unit.py` / `test_codegen_init_unit.py` / `test_codegen_pyi_unit.py` / `test_codegen_registry_unit.py` / `test_codegen_srv_action_unit.py` | 消息模块、初始化模块、stub、注册表、服务/动作 wrapper 生成 |
-| `test_pipeline_plan_unit.py` / `test_codegen_orchestrator_unit.py` / `test_generator.py`                                                                    | plan 构建、编排、校验、生成器集成                          |
-| `test_publisher_unit.py` / `test_subscriber_unit.py` / `test_service_unit.py` / `test_action_unit.py` / `test_action_msgs_unit.py`                          | 端点行为（含 `action_key` 通道映射）                       |
-| `test_client_unit.py` / `test_namespace_unit.py`                                                                                                            | `ZRosClient` 工厂方法、就绪探测、`join_name`               |
-| `test_liveliness_unit.py`                                                                                                                                   | key 表达式构建与解析、QoS                                  |
-| `test_protocols.py` / `test_runtime_structure_unit.py` / `test_runtime_contract.py`                                                                         | 协议结构性检查、运行时结构与 ABI 契约                      |
-| `test_type_map_unit.py` / `test_utilities.py` / `test_utils_unit.py`                                                                                        | 类型映射、默认值、`from_attributes` 等工具                 |
-| `test_asyncio_*.py`                                                                                                                                         | asyncio 门面（service/action/endpoints/liveliness/client） |
-| `test_integration.py`                                                                                                                                       | 本机两个 Zenoh peer 的 pub/sub、service、action 互通       |
-| `test_proxies_unit.py`                                                                                                                                      | `ZenohSessionProxy` 保护语义                               |
-
-新增功能/修复必须配套测试；新 `_` 前缀函数要么被测试覆盖（具名 ignore 才合理），要么删除。
+1. the owning package `__init__.py` and its `__all__`;
+2. the README (protocol table / usage examples);
+3. `.rules`;
+4. the `tests/test_runtime_contract.py` whitelist if the generator hardcodes
+   a reference to the symbol.
 
 ---
 
-## 9. 基准测试
+## 5. Codegen ↔ runtime ABI contract
 
-`benchmarks/benchmarks.py` + `compare.py`，基于 pytest-benchmark：
+The generator hardcodes a small set of runtime symbols into generated output
+(the generation ABI):
+
+- `zros2.types` → `RosMessage`, `ServiceTypes`, `ActionTypes`
+- `zros2.types._utils` → `from_attributes` (the only `_`-prefixed symbol in the
+  ABI; moving that private module requires regenerating output)
+
+`RUNTIME_CONTRACT` in `tests/test_runtime_contract.py` is the authoritative
+whitelist. The contract tests have four groups:
+
+| Test group | Checks |
+|---|---|
+| `TestStaticImportContract` | Every `zros2.*` import emitted by the generator is whitelisted **and** resolves against the installed runtime; the whitelist cannot drift silently. |
+| `TestRegistryContract` | `REGISTRY_AST` defines every registry function re-exported by the root `__init__.py`. |
+| `TestContainerFieldContract` | Keyword names in generated `ServiceTypes(...)` / `ActionTypes(...)` calls match the container dataclass fields. |
+| `TestProtocolContract` | Generated message classes satisfy `RosMessage`; service/action wrappers expose every `RosService` / `RosAction` / `RosActionView` member. |
+
+**Changing either side requires updating the whitelist in the same change**;
+the test fails loudly otherwise. For example, moving `from_attributes` to a
+public module requires updating both the generator and `RUNTIME_CONTRACT`, then
+regenerating existing output.
+
+---
+
+## 6. Type-system rules
+
+- Use **PEP 695 type parameters** bound to `RosMessage`
+  (`class Publisher[MsgT: RosMessage]`,
+  `def create_publisher[MsgT: RosMessage](...)`). Do **not** define or export
+  shared module-level `TypeVar`s — each class/function declares its own.
+- `RosActionView` is the three-parameter semantic view of an action type
+  (`GoalT` / `ResultT` / `FeedbackT`) for generic consumers that forward goals
+  or observe results/feedback without touching the five transport sub-types.
+- `@runtime_checkable` performs **presence checks only**: applying `isinstance`
+  to member protocols (`RosService`, `RosAction`, `RosActionView`) only tests
+  `hasattr(Request/Response/Goal/...)` and must not be used as runtime
+  validation.
+- Prefer structural protocols over ABCs; use `isinstance(x, RosMessage)` only
+  when a runtime check is genuinely needed.
+- `RosService` / `RosAction` / `RosActionView` describe generated **class
+  objects**, not instances. Their members are plain attributes; `ClassVar`
+  cannot reference a protocol's own type parameters. Pass the class object
+  directly (`action_type: RosAction[...]`), not `type[RosAction[...]]`.
+  `pyrightconfig.json` type-checks `src` only; tests and benchmarks are
+  intentionally outside the type-check scope.
+
+---
+
+## 7. Coding conventions
+
+- Prefer **modern Python 3.12 syntax**: PEP 695 type parameters, PEP 673
+  (`Self`), PEP 604 (`X | Y`), PEP 698 (`typing.override`), PEP 692 (TypedDict
+  `**kwargs`), PEP 654 (`ExceptionGroup`), PEP 646 (`TypeVarTuple`). Avoid
+  `Optional[X]` / `Union[X, Y]` / `typing.List` and similar legacy forms.
+- Type annotations are mandatory on every function signature and public class
+  attribute.
+- Use double quotes consistently, including docstrings and error messages.
+- Every `.py` file has a module-level docstring describing its purpose.
+- Docstrings follow Google style (`Args:` / `Raises:` / `Returns:`); write
+  docstrings for public APIs, keep internal ones lean.
+- Line length: soft 88, hard 99.
+- Naming: `snake_case` for functions/methods/variables; `PascalCase` for
+  classes/protocols/dataclasses; `UPPER_CASE` for constants and ROS constant
+  fields; private symbols use a leading `_`.
+- Imports: standard library → third-party → local, separated by blank lines.
+  Cross-package imports are absolute (`from zros2.types...`); only
+  same-package `.` relative imports are allowed. Parent-relative imports
+  (`..` / `...`) are forbidden and enforced by `tests/test_architecture.py`.
+  Import classes/functions rather than modules unless documented otherwise.
+- Exceptions are rooted at `ZRos2Exception` (see SDK guide §11); raise specific
+  exceptions and catch broadly only at public API boundaries.
+- **Context managers must be idempotent** (`destroy()` checks for `None` before
+  undeclaring).
+- Comments explain non-obvious intent/constraints/trade-offs, not what the code
+  already says.
+
+### Type checking (pyright)
+
+`pyrightconfig.json` type-checks **`src` only**; `reportUnusedImport` is an
+error. Tests and benchmarks are intentionally excluded from static type
+checking and are validated by runtime tests instead. Do not add `# pyright:
+ignore` comments: fix the annotation or the underlying type boundary. Zenoh's
+own incomplete type surface is an external dependency issue; do not model it
+in zros2 or use it as a reason to lower the global checking mode.
+
+---
+
+## 8. Test organization
+
+pytest only — no `unittest.TestCase`. Test classes use `TestPascalCase` to
+describe the unit under test; files are `test_<module_name>.py`; fixtures live
+in `conftest.py`.
+
+| Test files | Coverage |
+|---|---|
+| `test_parser_unit.py` / `test_type_grammar.py` / `test_action_expand_unit.py` | Lark grammar, type expressions, field parsing, action IDL expansion |
+| `test_codegen_msg_unit.py` / `test_codegen_init_unit.py` / `test_codegen_pyi_unit.py` / `test_codegen_registry_unit.py` / `test_codegen_srv_action_unit.py` | message modules, init modules, stubs, registry, service/action wrappers |
+| `test_pipeline_plan_unit.py` / `test_codegen_orchestrator_unit.py` / `test_generator.py` | plan building, orchestration, validation, generator integration |
+| `test_publisher_unit.py` / `test_subscriber_unit.py` / `test_service_unit.py` / `test_action_unit.py` / `test_action_msgs_unit.py` | endpoint behavior (including `action_key` channel mapping) |
+| `test_client_unit.py` / `test_namespace_unit.py` | `ZRosClient` factory methods, readiness, `join_name` |
+| `test_liveliness_unit.py` | key-expression building/parsing, QoS |
+| `test_protocols.py` / `test_runtime_structure_unit.py` / `test_runtime_contract.py` | protocol structure, runtime structure, ABI contract |
+| `test_type_map_unit.py` / `test_utilities.py` / `test_utils_unit.py` / `test_semantics_units.py` | type mapping, defaults, `from_attributes`, semantic-layer units |
+| `test_asyncio_*.py` | asyncio facade (service/action/endpoints/liveliness/client) |
+| `test_integration.py` | pub/sub, service, action over two local Zenoh peers |
+| `test_proxies_unit.py` | `ZenohSessionProxy` protection semantics |
+| `test_architecture.py` | generator import-direction rules |
+| `test_golden_codegen.py` / `golden/` | normalized generated `.py` / `.pyi` snapshots |
+| `test_regressions.py` | root-cause regression coverage |
+
+New features/fixes require tests. New `_`-prefixed functions must either be
+covered by tests (a named ignore is then justified) or be removed.
+
+---
+
+## 9. Benchmarks
+
+`benchmarks/benchmarks.py` and `compare.py` use pytest-benchmark:
 
 ```bash
-pytest benchmarks/ --benchmark-only   # 应收集 96 个测试
+pytest benchmarks/ --benchmark-only   # expects 96 tests
 ```
 
-生成器输出发生变化时必须完整运行一遍基准，确认无性能回退。
+Run the full benchmark when generator output changes to confirm there is no
+performance regression.
 
 ---
 
-## 10. 开发环境与验证
+## 10. Development environment and verification
 
 ```bash
 pip install -e ".[dev]"
 
-# 全部测试
+# all tests
 pytest
 
-# 类型检查：0 错误 0 警告（含改动波及文件）
-npx pyright
+# lint/import sorting
+ruff check src tests benchmarks
 
-# 生成器冒烟
+# type checking: 0 errors / 0 warnings, including touched files
+pyright                 # or: npx pyright
+
+# generator smoke test
 python -m zros2.generator --help
 
-# 契约测试（生成 ABI）
+# generation ABI contract
 pytest tests/test_runtime_contract.py -v
 
-# 基准收集检查
+# benchmark collection check
 pytest benchmarks/ --benchmark-only --collect-only
 ```
 
 ---
 
-## 11. CI 说明
+## 11. CI and release
 
-`.github/workflows/ci.yml`：push / PR 到 `master` 触发（`*.md` 与 `docs/**` 变更不触发）；Python 3.14；`pip install -e ".[dev]"` + `pytest-cov`；运行 `pytest tests/` 并产出 `coverage.xml`（上传为 artifact）。本地提交前至少保证测试与 pyright 全绿。
+`.github/workflows/ci.yml` runs on pushes / PRs to `master` (changes limited to
+`*.md` and `docs/**` are ignored). It uses a Python **3.12 / 3.13 / 3.14**
+matrix, installs `.[dev]`, runs `pytest tests/` with a 95% coverage gate and
+uploads `coverage.xml`, runs a separate `type-check` job with `pyright`, and a
+separate `package` job that builds a wheel, installs it, and verifies bundled
+assets. Before committing locally, tests and pyright must be green.
 
----
+`.github/workflows/release.yml` runs when a GitHub Release is **published**. It
+checks that the tag (`vX.Y.Z`) matches `pyproject.toml`, runs the full test
+suite, builds a `py3-none-any` wheel and an sdist with `python -m build`, and
+attaches them to the Release. zros2 is pure Python, so one wheel covers all
+OSes/architectures. It is not published to PyPI.
 
-## 12. 提交前检查清单
+Release steps:
 
-- [ ] **完整测试套件**：`pytest` 通过，无新增失败。
-- [ ] **类型检查**：`npx pyright` 全项目 0 错误 0 警告（含改动波及文件）。
-- [ ] **公开 API 完整性**：公共符号有变更时，所属包 `__init__.py` + `__all__`、README（协议表/示例）、`.rules`、契约白名单同步更新。
-- [ ] **契约测试**：`tests/test_runtime_contract.py` 通过——生成器硬编码的每个 `zros2.*` 导入仍可解析。
-- [ ] **生成器冒烟**：生成器有变更时 `python -m zros2.generator --help` 可运行，且 `pytest benchmarks/ --benchmark-only` 正常收集（96 个）；生成输出变化时完整运行基准。
-- [ ] **文档即契约**：README/docstring 示例无 `_` 前缀模块导入。
-- [ ] **无死代码**：新 `_` 前缀函数要么被测试覆盖（具名 ignore 合理）要么删除。
-- [ ] **Diff 审查**：`git --no-pager diff` 只有预期改动，无杂散文件/调试残留。
-- [ ] **提交信息**：祈使语气，≤ 72 字符主题，按提交约定带 scope 前缀。
-
----
-
-## 13. 提交与 PR 约定
-
-- 提交信息：**祈使语气**、首字母大写、主题 ≤ 72 字符。
-  - 好：`Add bounded string support to parser`
-  - 坏：`fixed bug` / `more changes`
-- Scope 前缀鼓励使用：`parser:`、`codegen:`、`types:`、`docs:`、`test:` 等。
+1. set `pyproject.toml` `version` to the target version (e.g. `2.0.0`);
+2. create and push the tag: `git tag v2.0.0 && git push origin v2.0.0`;
+3. publish a GitHub Release on that tag (or `gh release create v2.0.0`). The
+   workflow attaches `zros2-2.0.0-py3-none-any.whl`.
 
 ---
 
-## 14. 典型变更走查
+## 12. Pre-commit checklist
 
-### 场景 A：新增一个公开符号（如公开一个工具函数）
+- [ ] **Full test suite**: `pytest` passes with no new failures.
+- [ ] **Lint/imports**: `ruff check src tests benchmarks` passes (import
+      blocks sorted, no unused imports).
+- [ ] **Type checking**: `pyright` reports 0 errors / 0 warnings for the whole
+      project, including touched/affected files.
+- [ ] **Public API completeness**: if public symbols changed, update the
+      owning `__init__.py` + `__all__`, README (protocol table/examples),
+      `.rules`, and the contract whitelist.
+- [ ] **Contract tests**: `tests/test_runtime_contract.py` passes — every
+      hardcoded `zros2.*` import still resolves.
+- [ ] **Generator smoke test**: if the generator changed, `python -m
+      zros2.generator --help` works and `pytest benchmarks/ --benchmark-only`
+      still collects (96); run the full benchmark when output changed.
+- [ ] **Documentation is a contract**: README/docstring examples import no
+      `_`-prefixed modules.
+- [ ] **No dead code**: new `_`-prefixed functions are either tested (with a
+      justified named ignore) or removed.
+- [ ] **Diff review**: `git --no-pager diff` contains only intended changes; no
+      stray files or debug leftovers.
+- [ ] **Commit message**: imperative, ≤ 72-char subject, scoped prefix.
 
-1. 在所属包 `__init__.py` 中导入并加入 `__all__`；
-2. 同步更新 README（协议表或用法示例）、`.rules`；
-3. 若生成器会硬编码引用它，同一次变更更新 `RUNTIME_CONTRACT` 并重新生成产物；
-4. 补测试（结构/单元），跑 `pytest` + `npx pyright`；
-5. 走完第 12 节检查清单后提交。
+---
 
-### 场景 B：给生成器新增一种类型形态
+## 13. Commit and PR conventions
 
-1. `parsing/`：Lark 语法与 `MsgField` 模型（若需要新字段形态）；
-2. `semantics/`：`resolve_type` 的分支与 `ResolvedType` 注解表达式；
-3. `codegen/`：`generate_message_module` 或 wrapper 生成的 AST 逻辑 + `.pyi` stub（stub 走 `TypeInfo`，不要对注解字符串再 regex）；
-4. `pipeline/`：确认收集/校验/写盘无需调整；
-5. 测试：parser 单测 → codegen 单测 → 契约测试 → 集成测试；基准全跑；
-6. 若生成产物新增了 `zros2.*` 导入，更新 `RUNTIME_CONTRACT`。
+- Commit messages: **imperative mood**, capitalized, subject ≤ 72 characters.
+  - Good: `Add bounded string support to parser`
+  - Bad: `fixed bug` / `more changes`
+- Scope prefixes are encouraged: `parser:`, `codegen:`, `types:`, `docs:`,
+  `test:`, etc.
 
-### 场景 C：移动一个运行时内部模块
+---
 
-1. 移动后更新包内相对导入与 `__init__.py` 再导出；
-2. 若该模块被生成器硬编码引用（当前仅 `zros2.types._utils` 的 `from_attributes`），在**同一次变更**中更新 `RUNTIME_CONTRACT` 并重新生成产物，否则契约测试会失败；
-3. 检查 README/docstring 示例不引用 `_` 前缀路径。
+## 14. Typical change walkthroughs
 
-### 场景 D：改 ROS action 传输类型布局
+### Scenario A: add a public symbol (e.g. expose a utility)
 
-1. **只改** `semantics/_action.py` 的 `ACTION_SPEC` / `GOAL_ID_TYPE`（parser 不得再写 `uint8[16]` 或 `SendGoal_*`）；
-2. codegen 后缀表与 pipeline 导出过滤从该 spec 推导，不要另写一份；
-3. runtime 的 Zenoh 通道路径在 `endpoints/_action_keys.py`，与 IDL 展开分开；`_action_msgs.py` 的 `goal_id` 布局与 `GOAL_ID_TYPE` 对齐；
-4. 补 `test_action_expand_unit.py`，再跑生成器集成测试。改 `GOAL_ID_TYPE` 等于改 wire，需要与 `zenoh-bridge-ros2dds` 对打后再做。
+1. Import it in the owning package's `__init__.py` and add it to `__all__`.
+2. Update README (protocol table or examples) and `.rules`.
+3. If the generator hardcodes it, update `RUNTIME_CONTRACT` and regenerate
+   output in the same change.
+4. Add tests (structural/unit), then run `pytest` and `pyright`.
+5. Complete the checklist in §12 and commit.
+
+### Scenario B: add a new type form to the generator
+
+1. `parsing/`: update the Lark grammar and `MsgField` model if the field shape
+   is new.
+2. `semantics/`: add the `resolve_type` branch and the `ResolvedType`
+   annotation expression; keep literal/bound handling in the semantic layer.
+3. `codegen/`: update `generate_message_module` / wrapper AST and the `.pyi`
+   stub; stubs consume `TypeInfo` and must not re-parse annotation strings.
+4. `pipeline/`: confirm collection/validation/writing need no adjustment.
+5. Tests: parser unit → codegen unit → contract → integration; run the full
+   benchmark.
+6. If generated output adds a `zros2.*` import, update `RUNTIME_CONTRACT`.
+
+### Scenario C: move a runtime internal module
+
+1. Update relative imports and `__init__.py` re-exports.
+2. If the generator hardcodes it (currently only `zros2.types._utils` /
+   `from_attributes`), update `RUNTIME_CONTRACT` and regenerate output in the
+   same change; otherwise contract tests fail.
+3. Confirm README/docstring examples do not reference `_`-prefixed paths.
+
+### Scenario D: change the ROS action transport layout
+
+1. Change **only** `semantics/_action.py`'s `ACTION_SPEC` / `GOAL_ID_TYPE`;
+   the parser must not hardcode `uint8[16]` or `SendGoal_*`.
+2. Derive codegen suffix tables and pipeline export filtering from that spec;
+   do not duplicate them.
+3. Runtime Zenoh channel paths live in `endpoints/_action_keys.py`, separate
+   from IDL expansion. `_action_msgs.py`'s `goal_id` layout must match
+   `GOAL_ID_TYPE`.
+4. Add `test_action_expand_unit.py` coverage, then run generator integration
+   tests. Changing `GOAL_ID_TYPE` changes the wire format; validate it against
+   `zenoh-bridge-ros2dds` first.

@@ -3,55 +3,25 @@
 Type-pattern detection is delegated to the Lark-based
 :mod:`zros2.generator.parsing._types` parser."""
 
-import ast
 import datetime
 import hashlib
 import re
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 from lark import LarkError
 
-from ..parsing._types import parse_type
+from zros2.generator.parsing._types import parse_type
 
-_PKG_VERSION: str = _pkg_version("zros2")
+try:
+    _PKG_VERSION: str = _pkg_version("zros2")
+except PackageNotFoundError:  # source tree without installed metadata
+    _PKG_VERSION = "0.0.0"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Header comment
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-def generated_metadata_stmts(source: str | None = None) -> list[ast.stmt]:
-    """Return module-level assignment AST nodes for generated-file metadata.
-
-    Every generated module should carry:
-
-    * ``__generated__ = True`` — indicates the file is machine-generated.
-    * ``__generator__ = "zros2-gen vX.Y.Z"`` — identifies the generator.
-    * ``__source__ = "..."`` — the original ROS 2 IDL source file (omitted
-      when ``source`` is ``None``, e.g. for ``__init__.py`` aggregations).
-    """
-    stmts: list[ast.stmt] = []
-    stmts.append(
-        ast.Assign(
-            targets=[ast.Name(id="__generated__")],
-            value=ast.Constant(value=True),
-        )
-    )
-    stmts.append(
-        ast.Assign(
-            targets=[ast.Name(id="__generator__")],
-            value=ast.Constant(value=f"zros2-gen v{_PKG_VERSION}"),
-        )
-    )
-    if source is not None:
-        stmts.append(
-            ast.Assign(
-                targets=[ast.Name(id="__source__")],
-                value=ast.Constant(value=source),
-            )
-        )
-    return stmts
 
 
 def header_comment(content: str = "", distro: str = "") -> str:
@@ -97,10 +67,12 @@ def to_snake_case(name: str) -> str:
 
 
 def default_expr(type_str: str) -> str:
-    """Return a Python default-value expression for a ROS 2 type, or empty.
+    """Return a Python default-value expression for a ROS 2 type.
 
-    Uses the Lark type parser to determine the correct default based on
-    the type's structure.
+    **Deprecated compatibility API:** callers should use
+    :func:`._literal_values.default_scalar` plus
+    :func:`zros2.generator.codegen._literal_ast.literal_ast`. The stub renderer
+    no longer uses this helper; it remains only for older callers.
     """
     try:
         info = parse_type(type_str)
@@ -109,41 +81,22 @@ def default_expr(type_str: str) -> str:
 
     base = info.base_name
 
-    # ── Arrays / sequences ────────────────────────────────────────────
-    if info.kind in ("unbounded", "unbounded_sequence") and base == "uint8":
-        return "()"
+    # Arrays / sequences keep their text representation for compatibility.
     if info.kind in ("unbounded", "unbounded_sequence"):
         return "()"
     if info.kind == "fixed" and base == "uint8" and info.array_size:
         return f"(0,) * {info.array_size}"
     if info.kind in ("fixed", "bounded", "bounded_sequence"):
         return "()"
-
-    # ── Bounded string ────────────────────────────────────────────────
-    if info.is_bounded_string:
-        return '""'
-
-    # ── Scalars ───────────────────────────────────────────────────────
-    if base in ("string", "wstring"):
-        return '""'
-    if base == "bool":
-        return "False"
-    if base in (
-        "int8",
-        "uint8",
-        "int16",
-        "uint16",
-        "int32",
-        "uint32",
-        "int64",
-        "uint64",
-        "byte",
-        "char",
-    ):
-        return "0"
-    if base in ("float32", "float64"):
-        return "0.0"
     if base in ("time", "duration"):
         return "None"
 
-    return "None"
+    from zros2.generator.semantics._literal_values import default_scalar
+
+    try:
+        value = default_scalar(info)
+    except ValueError:
+        return "None"
+    if isinstance(value, str):
+        return f'"{value}"'
+    return repr(value)
