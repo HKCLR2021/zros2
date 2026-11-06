@@ -158,9 +158,15 @@ def _type_name(tp: Any) -> str:
     """Return a human-readable name for a type, handling generics."""
     origin = get_origin(tp)
     if origin is not None:
+        # Python 3.12 reports ``types.UnionType`` for ``int | None`` while
+        # Python 3.14+ reports ``typing.Union``. Normalize both so display
+        # names are stable across supported interpreters.
+        origin_name = (
+            "Union" if origin is Union or origin is types.UnionType else origin.__name__
+        )
         args = get_args(tp)
         if args:
             inner = ", ".join(_type_name(a) for a in args if a is not type(None))
-            return f"{origin.__name__}[{inner}]"
-        return origin.__name__
+            return f"{origin_name}[{inner}]"
+        return origin_name
     return tp.__name__
